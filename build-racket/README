@@ -4,8 +4,8 @@ makebase_bench.sh version MAX_cpu interval path-to-makefile-directory
 Runs 'make base' in 'path-to-make-file-directory' with 1 to 'MAX_cpu' increasing the
 number of cpu's by 'interval'.
 
-Results are written into a 'base_version_timestamp.out' file in a results directory
-which is in this directory.
+Results are written to a 'base_version_timestamp.out' file in a results directory
+created where script is run from.
 
 
 make_bench.sh version MAX_cpu interval path-to-makefile-directory
@@ -13,7 +13,7 @@ make_bench.sh version MAX_cpu interval path-to-makefile-directory
 Runs 'make' in 'path-to-make-file-directory' with 1 to 'MAX_cpu' increasing the
 number of cpu's by 'interval'.
 
-Results are written into a 'base_version_timestamp.out' file in a results directory
-which is in this directory.
+Results are written to a 'base_version_timestamp.out' file in a results directory
+created where script is run from.
 
 
