@@ -7,13 +7,35 @@ number of cpu's by 'interval'.
 Results are written to a 'base_version_timestamp.out' file in a results directory
 created where script is run from.
 
+THIS SCRIPT ISNT BEING USED ATM
 
-make_bench.sh version MAX_cpu interval path-to-makefile-directory
+=====================================================================================
 
-Runs 'make' in 'path-to-make-file-directory' with 1 to 'MAX_cpu' increasing the
-number of cpu's by 'interval'.
+make_bench.sh version machine MAX_cpu interval path-to-makefile-directory
 
-Results are written to a 'base_version_timestamp.out' file in a results directory
-created where script is run from.
+Runs 'make' in 'path-to-make-file-directory' with 1 cpu, then 'interval' cpus, to 'MAX_cpu' 
+increasing the number of cpu's by 'interval'.
+
+Version and machine are used along with a timestamp to create a file in the 'results'
+directory that contains the timing output.
+
+Output from each run of make is put into a file 'output_version_machine_timestamp_cpu.out'.
+
+
+This script contains 'git clean -fxd' to delete everything that isn't commited in the git
+repository.  This is to make sure a full build is done every time.  As a result this script
+only works with git projects (although I guess even if that command fails bash will continue
+and run make in whatever directory).
+
+======================================================================================
+
+make_bench_every_rule.sh version machien max_cpu interval path-to-makefile-directory
+
+Works the same as above except it uses a special shell to time each shell command
+launched by make.  The output of this is written to 'results/prints_version_machine_timestamp_cpu.out'
+
+
+
+
 
 

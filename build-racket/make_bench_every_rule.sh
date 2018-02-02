@@ -15,7 +15,7 @@ tstamp=$(date +%T)
 outfile="$path/results/$1_$2_$tstamp.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
-mkdir -p $path/results
+mkdir -p $(pwd)/results
 
 touch $outfile
 # write first line to file
@@ -25,15 +25,17 @@ cd $makepath
 
 echo "Cleaning"
 
-git clean -fxd     # deletes everything in the git directory that isn't commited. 
+git clean -fxd
 
 echo "running make" 
 
 cpu=1
 
-printsfile="$path/results/output_$1_$2_$tstamp_$cpu.out" # to store output from make.
+printsfile="$path/results/prints_$1_$2_$tstamp_$cpu.out"
 
-tout=($( time (make CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
+touch $printsfile
+
+tout=($( time (make -s SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile ) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -50,12 +52,14 @@ while [ "$cpu" -le "$MAX" ] # need the spaces
 do
     # clean
     echo "Cleaning"
+ 
     git clean -fxd
+    
     echo "running make"
 
-    printsfile="$path/results/output_$1_$2_$tstamp_$cpu.out"
+    printsfile="$path/results/prints_$1_$2_$tstamp_$cpu.out"
 
-    tout=($( time (make CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time (make -s SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time

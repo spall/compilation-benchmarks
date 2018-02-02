@@ -31,7 +31,7 @@ do
 
     echo "running make base"
 
-    tout=($( time (make base CPUS=$cpu 2>/dev/null 1>&2 ) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time (make base -j $cpu JOB_OPTIONS="-j $cpu" 2>/dev/null 1>&2 ) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
