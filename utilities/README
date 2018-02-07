@@ -1,0 +1,6 @@
+make2graph.rkt <file2parse>  --- creates a graph of makefile targets from the output of
+make -nd
+
+rusage-parse.rkt <file2parse> ----- creates a structure with the rusage information for each
+shell command run by the makefile.  The file being parsed is created by capturing the output of
+running a makefile with the rusage shell.
