@@ -12,10 +12,13 @@ makepath=$5
 path=$(pwd)
 
 tstamp=$(date +%T)
-outfile="$path/results/$1_$2_$tstamp.out"  # for some reason using version here doesnt work.
+outfile="$path/results/$tstamp_$1_$2.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p $(pwd)/results
+
+# create rusage-out directory if it doesnt exist
+mkdir -p $path/results/rusage-out
 
 touch $outfile
 # write first line to file
@@ -31,7 +34,7 @@ echo "running make"
 
 cpu=1
 
-printsfile="$path/results/prints_$1_$2_$tstamp_$cpu.out"
+printsfile="$path/results/rusage-out/$tstamp_$1_$2_$cpu.out"
 
 touch $printsfile
 
@@ -57,7 +60,7 @@ do
     
     echo "running make"
 
-    printsfile="$path/results/prints_$1_$2_$tstamp_$cpu.out"
+    printsfile="$path/results/rusage-out/$tstamp_$1_$2_$cpu.out"
 
     tout=($( time (make -s SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
 

@@ -19,7 +19,7 @@ increasing the number of cpu's by 'interval'.
 Version and machine are used along with a timestamp to create a file in the 'results'
 directory that contains the timing output.
 
-Output from each run of make is put into a file 'output_version_machine_timestamp_cpu.out'.
+Output from each run of make is put into a file 'results/output/timestamp_version_machine_cpu.out'.
 
 
 This script contains 'git clean -fxd' to delete everything that isn't commited in the git
@@ -32,7 +32,7 @@ and run make in whatever directory).
 make_bench_every_rule.sh version machien max_cpu interval path-to-makefile-directory
 
 Works the same as above except it uses a special shell to time each shell command
-launched by make.  The output of this is written to 'results/prints_version_machine_timestamp_cpu.out'
+launched by make.  The output of this is written to 'results/rusage-out/timestamp_version_machine_cpu.out'
 
 
 
