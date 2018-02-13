@@ -1,6 +1,16 @@
-make2graph.rkt <file2parse>  --- creates a graph of makefile targets from the output of
-make -nd
+driver.rkt [-d] (-r | -n) <file>
 
-rusage-parse.rkt <file2parse> ----- creates a structure with the rusage information for each
-shell command run by the makefile.  The file being parsed is created by capturing the output of
-running a makefile with the rusage shell.
+-d or --dotfile produces a dotfile from the tree produced from <file>
+
+-r or --rusage-data
+-n or --dry-run-output
+
+One of the above must be supplied, it tells the program how to parse <file>.
+
+-n or --dry-run-output says <file> was produced by running 'make -nd' and so the
+tree that is created will not contain any rusage data.
+
+-r or --rusage-data says <file> was produced by running make with the rusage shell
+as well as 'make --debu=v ...' which tells make to print additional debug information.
+This will produce a tree that includes any rusage data parsed from the file.
+
