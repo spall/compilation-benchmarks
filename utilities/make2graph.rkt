@@ -1,36 +1,18 @@
-#lang racket
+#lang racket/base
 
-#;(require (only-in pfds/queue/bankers
-                  tail
-                  head
-                  enqueue
-                  queue
-                  (empty? queue-empty?)))
-#|
-  TODO: Not in order of importance.
-        1. command line parsing
-        2. parse makefile
-        3. ...
-|#
-(define tid 0)
-(define (get-tid)
-  (begin0 tid
-    (set! tid (+ 1 tid))))
+(require racket/list
+         racket/string
+         "makegraph.rkt")
 
-(struct target (id name children dirty?) #:mutable)
-
-(define (add-children target child)
-  (set-target-children! target (cons child (target-children target))))
-
-(struct make2graph (targets root) #:mutable)
+(provide parse-dry-run)
 
 (define (get-target graph tname)
-  (define targets (make2graph-targets graph))
+  (define targets (makegraph-targets graph))
   (let loop ([ts targets])
     (cond
       [(empty? ts)
-       (let ([nt (target (get-tid) tname '() #f)])
-         (set-make2graph-targets! graph (cons nt (make2graph-targets graph)))
+       (let ([nt (create-target tname)])
+         (set-makegraph-targets! graph (cons nt (makegraph-targets graph)))
          nt)]
       [(equal? (target-name (car ts)) tname)
        (car ts)]
@@ -93,7 +75,7 @@
                    ;; when do we want to do this?
                    (let ([child (get-target graph tname)])
                      ;; they check level here. not sure why
-                     (add-children root child)
+                     (add-child root child)
                      (something fip graph child)))
                (outer-loop)))]
           
@@ -101,12 +83,12 @@
            (lambda (rest-line)
              (let-values ([(tname _) (get-target-name rest-line)])
                (define target (get-target graph tname))
-               (set-target-dirty?! target #t)
+               (set-target-remake?! target #t)
                (outer-loop)))]
           [(starts-with words (list "Pruning" "file")) =>
            (lambda (rest-line)
              (let-values ([(tname _) (get-target-name rest-line)])
-               (add-children root (get-target graph tname))
+               (add-child root (get-target graph tname))
                (outer-loop)))]
           [(or (starts-with words (list "Finished" "prerequisites" "of" "target" "file"))
                (ends-with words (list "was" "considered" "already."))) =>
@@ -127,28 +109,22 @@
 
 (define (create-graph file-path)
   (define file (open-input-file file-path #:mode 'text))
-  (define root (target (get-tid) "<ROOT>" '() #f))
-  (define graph (make2graph '() root))
+  (define root (create-target "<ROOT>"))
+  (define graph (makegraph '() root))
 
   (something file graph root)
  
   (close-input-port file)
   graph)
 
-(define file-path
-  (command-line
-   #:args (path)
-   path))
-
+;; Code for a "queue"
 (define head car)
 (define tail cdr)
 (define (enqueue v q)
   (reverse (cons v (reverse q))))
 
-(define graph (create-graph file-path))
-
 (define (bfs graph)
-  (driver (make2graph-targets graph)
+  (driver (makegraph-targets graph)
           (make-hash)))
 
 (define (driver queue visited)
@@ -170,10 +146,9 @@
         [else
          (driver (tail queue) visited)]))))
 
-(bfs graph)
 
-
-
+(define (parse-dry-run file-path)
+  (void))
 
 
 
