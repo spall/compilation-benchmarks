@@ -63,10 +63,10 @@
    (apply string-append
           (cons "strict digraph {\n" ;; strict means no more than 1 edge between the same 2 nodes
                 (foldl (lambda (t ls)
-                         (append (create-edges t)
+                         (append (create-dotfile-edges t)
                                  ls))
                        '()
-                       (make2graph-targets g))))
+                       (makegraph-targets g))))
    "}\n"))
 
 (define child-color "blue")

@@ -20,13 +20,13 @@
     [else
      #f]))
 
-(define (get-target str)
+(define (get-target-name str)
   (string-trim (string-trim (string-trim str "." #:left? #f) "'" #:left? #f) "`" #:right? #f))
 
 (define (helper line to-match)
   (define words (string-split (string-trim line " " #:repeat? #t)))
   (and (starts-with? words to-match)
-       (get-target (last words))))
+       (get-target-name (last words))))
 
 ;; return #f or target
 (define (no-need-to-remake? line)
@@ -80,9 +80,9 @@
                 [val (car (cdr next))])
            (match info_
              ["rc" (set-rusage-data-rc! rds val)]
-             ["elapsed" (set-rusage-data-elapsed! rds val)]
-             ["user" (set-rusage-data-user! rds val)]
-             ["system" (set-rusage-data-system! rds val)]
+             ["elapsed" (set-rusage-data-elapsed! rds (string->number val))]
+             ["user" (set-rusage-data-user! rds (string->number val))]
+             ["system" (set-rusage-data-system! rds (string->number val))]
              ["maxrss" (set-rusage-data-maxrss! rds val)]
              ["avgrss" (set-rusage-data-avgrss! rds val)]
              ["ins" (set-rusage-data-ins! rds val)]
@@ -101,15 +101,34 @@
     [else
      #f]))
 
-(define (parse-file fip)
-  (let read-file ([t #f]
-                  [il 0])
+(define (read-full-line fip)
+  (let loop ()
     (define line (read-line fip))
+    (cond
+      [(or (equal? "" line)
+           (eof-object? line))
+       line]
+      [(equal? (car (reverse (string-split line))) "\\")
+       (printf "line ~a ends in \\" line)
+       (string-append (string-trim line "\\" #:left? #f)
+                      " "
+                      (loop))]
+      [else
+       line])))
+
+(define (parse-file fip)
+  (define mgraph (create-makegraph))
+  (define root (create-target "<ROOT>"))
+  (set-makegraph-root! mgraph root)
+  
+  (let read-file ([t root]
+                  [il 0])
+    (define line (read-full-line fip))
     (cond
       [(equal? "" line)
        (read-file t il)]
       [(eof-object? line)
-       (when t
+       (unless (equal? root t)
          (error 'parse-file "Unexpected end of line before end of target ~a" (target-name t)))]
 
       ;; set field in target appropriately
@@ -119,7 +138,7 @@
            (error 'parse-file "Expected t to be a target"))
          (unless (equal? tname (target-name t))
            (error 'parse-file "Expected no need to remake ~a got ~a" (target-name t) tname))
-         (set-target-remake?! t #f))]
+         #;(set-target-remake?! t #f))]
       [(must-remake? line) =>
        (lambda (tname)
          (unless t
@@ -142,23 +161,31 @@
            (error 'parse-file "Target is #f\n"))
          (unless (equal? tname (target-name t))
            (error 'parse-file "Expected to finish prereqs of ~a instead finished prereqs of ~a\n" (target-name t) tname))
-         (read-file t (- il 1)))]
+         (read-file t 0))]
       
       ;; starting a new target. 
       [(considering-target-file? line) =>
        (lambda (tname)
-         (define ntarget (create-target tname))
+         ;; check if target already exists in graph.
+         (define ntarget (cond
+                           [(target-in-graph mgraph tname) =>
+                            identity]
+                           [else
+                            (let ([tmp (create-target tname)])
+                              (add-target-to-makegraph mgraph tmp)
+                              tmp)]))
+         
          (when t
            (if (> il 0) ;; prereq of t?
                (add-dep t ntarget)
                (add-child t ntarget)))
-         (read-file ntarget (+ 1 il))
+         (read-file ntarget 1)
          (read-file t il))]
 
       ;; run information
       [(argv? line) =>
        (lambda (cmd)
-         (define nline (read-line fip))
+         (define nline (read-full-line fip))
          (cond
            [(rusage-info? nline cmd) =>
             (lambda (info)
@@ -168,12 +195,14 @@
             (printf "Expected times line to follow argv line ~a got ~a instead\n" line nline)])
          (read-file t il))]
       [else
-       (read-file t il)])))
+       (read-file t il)]))
+  mgraph)
 
 (define (parse-rusage file-path)
   (define file (open-input-file file-path #:mode 'text))
   (define result (parse-file file))
-  (close-input-port file))
+  (close-input-port file)
+  result)
 
   
 
