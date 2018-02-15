@@ -44,11 +44,11 @@
 (when (time-target?)
   (let ([t (get-target graph (time-target?))])
     (if t
-        (printf "Time for target ~a is ~a\n" (target-name t) (calculate-target-time t))
+        (printf "Time for target ~a is ~a seconds.\n" (target-name t) (calculate-target-time t))
         (printf "Couldn't find target ~a in graph\n" (time-target?)))))
 
 (when (create-dotfile?)
-  (define fp (open-output-file (create-dotfile?) #:mode 'text #:exists 'replace))
-  (write (create-dotfile-string graph) fp)
+  (define fp (open-output-file (create-dotfile?) #:exists 'replace))
+  (display (create-dotfile-string graph) fp)
   (printf "Wrote graph to ~a\n" (create-dotfile?))
   (close-output-port fp))

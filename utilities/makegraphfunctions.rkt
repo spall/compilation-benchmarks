@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/list
+         racket/string
          "makegraph.rkt")
 
 (provide longest-dep-path
@@ -77,12 +78,12 @@
   ;; edges from v to children
   (append
    (map (lambda (c)
-          (format "~a -> ~a [color=~a];\n" (target-name v) (target-name c) child-color)) ;; edge from v to c because v depends on c
+          (format "\"~a\" -> \"~a\" [color=~a];\n" (target-name v) (target-name c) child-color)) ;; edge from v to c because v depends on c
         (target-children v))
    
   ;; edges from dependences to v
    (map (lambda (d)
-          (format "~a -> ~a [color=~a];\n" (target-name v) (target-name d) dep-color))
+          (format "\"~a\" -> \"~a\" [color=~a];\n" (target-name v) (target-name d) dep-color))
         (target-deps v))))
 
 ;; ----------------------------------------------------------------------

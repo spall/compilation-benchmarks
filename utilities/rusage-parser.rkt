@@ -109,7 +109,6 @@
            (eof-object? line))
        line]
       [(equal? (car (reverse (string-split line))) "\\")
-       (printf "line ~a ends in \\" line)
        (string-append (string-trim line "\\" #:left? #f)
                       " "
                       (loop))]
