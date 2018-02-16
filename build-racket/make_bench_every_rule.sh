@@ -12,7 +12,7 @@ makepath=$5
 path=$(pwd)
 
 tstamp=$(date +%T)
-outfile="$path/results/$tstamp_$1_$2.out"  # for some reason using version here doesnt work.
+outfile="$path/results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p $(pwd)/results
@@ -34,11 +34,11 @@ echo "running make"
 
 cpu=1
 
-printsfile="$path/results/rusage-out/$tstamp_$1_$2_$cpu.out"
+printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
-tout=($( time (make -s SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile ) 2>&1 )) # parens on outside turn output into an array.
+tout=($( time (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile ) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -60,9 +60,9 @@ do
     
     echo "running make"
 
-    printsfile="$path/results/rusage-out/$tstamp_$1_$2_$cpu.out"
+    printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
-    tout=($( time (make -s SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time

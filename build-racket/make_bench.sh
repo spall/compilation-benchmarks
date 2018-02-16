@@ -12,7 +12,7 @@ makepath=$5
 path=$(pwd)
 
 tstamp=$(date +%T)
-outfile="$path/results/$2_$tstamp_$1_$2.out"  # for some reason using version here doesnt work.
+outfile="$path/results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p $path/results
@@ -34,7 +34,7 @@ echo "running make"
 
 cpu=1
 
-printsfile="$path/results/output/$tstamp_$1_$2_$cpu.out" # to store output from make.
+printsfile="$path/results/output/${tstamp}_${version}_${machine}_$cpu.out" # to store output from make.
 
 tout=($( time (make CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
 
@@ -56,7 +56,7 @@ do
     git clean -fxd
     echo "running make"
 
-    printsfile="$path/results/output/$tstamp_$1_$2_$cpu.out"
+    printsfile="$path/results/output/${tstamp}_${version}_${machine}_$cpu.out"
 
     tout=($( time (make CPUS=$cpu &>> $printsfile) 2>&1 )) # parens on outside turn output into an array.
 
