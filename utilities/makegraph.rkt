@@ -21,10 +21,10 @@
   (begin0 tid
     (set! tid (+ 1 tid))))
 
-(struct target (id name deps children data remake?) #:mutable #:transparent)
+(struct target (id name mfile deps children data remake?) #:mutable #:transparent)
 
 (define (create-target name)
-  (target (get-tid) name '() '() '() #f))
+  (target (get-tid) name #f '() '() '() #f))
 
 (define (add-data-to-target! t data)
   (set-target-data! t (append (target-data t) (list data))))
