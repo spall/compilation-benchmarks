@@ -14,7 +14,7 @@
          add-dep
          all-fields-set?
          add-target-to-makegraph
-         target-in-graph)
+         target-in-graph?)
 
 (define tid 0)
 (define (get-tid)
@@ -24,7 +24,13 @@
 (struct target (id name mfile deps children data remake?) #:mutable #:transparent)
 
 (define (create-target name)
-  (target (get-tid) name #f '() '() '() #f))
+  (target (get-tid)
+          name
+          #f  ; mfile
+          '() ; dependencies
+          '() ; children (strands) (run sequentially)
+          '() ; rusage data
+          #f)) ; remake?
 
 (define (add-data-to-target! t data)
   (set-target-data! t (append (target-data t) (list data))))
@@ -38,21 +44,15 @@
 (struct makegraph (targets root) #:mutable #:transparent)
 
 (define (create-makegraph)
-  (makegraph '() #f))
+  (makegraph (make-hash) #f))
 
-(define (add-target-to-makegraph graph t)
-  (set-makegraph-targets! graph (cons t (makegraph-targets graph))))
+(define (add-target-to-makegraph graph tid t)
+  (hash-set! (makegraph-targets graph) tid t))
 
-;; returns #f or target
-(define (target-in-graph graph tname)
-  (let loop ([targets (makegraph-targets graph)])
-    (cond
-      [(empty? targets)
-       #f]
-      [(equal? tname (target-name (car targets)))
-       (car targets)]
-      [else
-       (loop (cdr targets))])))
+(define (target-in-graph? graph tid)
+  (if (hash-ref (makegraph-targets graph) tid #f)
+      #t
+      #f))
 
 (struct rusage-data (cmd rc elapsed user system maxrss
                          avgrss ins outs minflt majflt

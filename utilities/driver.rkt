@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/cmdline
+         racket/list
          "make2graph.rkt"
          "rusage-parser.rkt"
          "makegraphfunctions.rkt"
@@ -42,10 +43,16 @@
      (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
 
 (when (time-target?)
-  (let ([t (get-target graph (time-target?))])
-    (if t
-        (printf "Time for target ~a is ~a seconds.\n" (target-name t) (calculate-target-time t))
-        (printf "Couldn't find target ~a in graph\n" (time-target?)))))
+  (let ([ts (get-target graph (time-target?))])
+    (cond
+      [ts
+       (let loop ([ts_ ts])
+         (unless (empty? ts_)
+           (let ([t (car ts_)])
+             (printf "Time for target ~a in makefile ~a is ~a seconds.\n" (target-name t) (target-mfile t) (calculate-target-time t)))
+           (loop (cdr ts_))))]
+      [else
+       (printf "Couldn't find target ~a in graph\n" (time-target?))])))
 
 (when (create-dotfile?)
   (define fp (open-output-file (create-dotfile?) #:exists 'replace))

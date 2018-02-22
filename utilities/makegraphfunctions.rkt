@@ -7,7 +7,9 @@
 (provide longest-dep-path
          calculate-target-time
          get-target
-         create-dotfile-string)
+         create-dotfile-string
+         print-all-targets-and-mfiles
+         collapse-targets)
 
 
 ;; time in seconds or #f
@@ -26,66 +28,85 @@
      (printf "Target ~a was not built.\n" (target-name t))
      #f]))
 
+;; return a list of possible targets
 (define (get-target graph tname)
   (define targets (makegraph-targets graph))
-  (let loop ([ts targets])
-    (cond
-      [(empty? ts)
-       #f]
-      [(equal? (target-name (car ts)) tname)
-       (car ts)]
-      [else
-       (loop (cdr ts))])))
+  (for/fold ([tgs '()])
+            ([val (in-hash-values targets)])
+    (if (equal? (target-name val) tname)
+        (cons val tgs)
+        tgs)))
+
+;; TODO
+(define (span root)
+  (void))
 
 (define (longest-dep-path root)
-  (let ([deps (target-deps root)])
-    (cond
-      [(empty? deps)
-       (values 0 (list root))]
-      [else
-       (define-values (maxlen maxls) (longest-dep-path (car deps)))
-       (let find-max ([mlen maxlen]
-                      [mls maxls]
-                      [rs (cdr deps)])
-         (cond
-           [(empty? rs)
-            (values mlen mls)]
-           [else
-            (define-values (tmplen tmpls) (longest-dep-path (car rs)))
-            (if (> tmplen mlen)
-                (find-max tmplen tmpls (cdr rs))
-                (find-max mlen mls (cdr rs)))]))])))
+  ;; TODO: complete redo
+  (void))
+
+(define (print-all-targets-and-mfiles graph name)
+  (define targets (hash-keys (makegraph-targets graph)))
+  (let loop ([ts targets])
+    (unless (empty? ts)
+      (when (equal? name (mcar (car ts)))
+        (printf "target: ~a; mfile: ~a\n\n" (mcar (car ts)) (mcdr (car ts))))
+      (loop (cdr ts)))))
+
+(define (collapse-targets graph)
+  (define targets (makegraph-targets graph))
+  (for ([t (in-hash-values targets)])
+    (let ([deps (target-deps t)]
+          [children (target-children t)])
+      ;; check deps and children for duplicates
+      (set-target-deps! t (let loop ([dps deps])
+                            (cond
+                              [(empty? dps)
+                               '()]
+                              [(member (car dps) (cdr dps))
+                               ;; occurs later so throw away
+                               (loop (cdr dps))]
+                              [else
+                               (cons (car dps) (loop (cdr dps)))])))
+      (set-target-children! t (let loop ([chlds children])
+                                (cond
+                                  [(empty? chlds)
+                                   '()]
+                                  [(member (car chlds) (cdr chlds))
+                                   (loop (cdr chlds))]
+                                  [else
+                                   (cons (car chlds) (loop (cdr chlds)))]))))))
+      
+      
 
 ;; ------------------------ graphviz dot file --------------------------------
 
+(define child-color "red") ;"blue")
+(define dep-color "green") ;"red")
+
 ;; returns a string represting a grpah in the dot language
 (define (create-dotfile-string g)
-  (string-append
-   (apply string-append
-          (cons "strict digraph {\n" ;; strict means no more than 1 edge between the same 2 nodes
-                (foldl (lambda (t ls)
-                         (append (create-dotfile-edges t)
-                                 ls))
-                       '()
-                       (makegraph-targets g))))
-   "}\n"))
-
-(define child-color "blue")
-(define dep-color "red")
-
-;; returns a list of edges.
-(define (create-dotfile-edges v)
-  ;; edges from v to children
-  (append
-   (map (lambda (c)
-          (format "\"~a\" -> \"~a\" [color=~a];\n" (target-name v) (target-name c) child-color)) ;; edge from v to c because v depends on c
-        (target-children v))
-   
-  ;; edges from dependences to v
-   (map (lambda (d)
-          (format "\"~a\" -> \"~a\" [color=~a];\n" (target-name v) (target-name d) dep-color))
-        (target-deps v))))
-
+  (define targets (makegraph-targets g))
+  (define (helper v targets color)
+    (lambda (c)
+      (define t (hash-ref targets c (lambda ()
+                                      (error 'create-dotfile "Failed to find ~a among graph's targets" c))))
+      (format "\"~a~a\" -> \"~a~a\" [color=~a];\n" (target-name v) (target-id v)
+              (target-name t) (target-id t) color)))
+      
+  (define (create-dotfile-edges v)
+    (append
+     (map (helper v targets child-color)
+          (target-children v))
+     (map (helper v targets dep-color)
+          (target-deps v))))
+  
+  (apply string-append
+         (append (for/fold ([accu "strict digraph {\n"])
+                           ([val (in-hash-values)])
+                   (append accu
+                           (create-dotfile-edges val)))
+                 "}\n")))
 ;; ----------------------------------------------------------------------
             
          

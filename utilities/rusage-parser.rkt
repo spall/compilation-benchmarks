@@ -5,7 +5,8 @@
          racket/match
          (only-in racket/function
                   identity)
-         "makegraph.rkt")
+         "makegraph.rkt"
+         "makegraphfunctions.rkt")
 
 (provide parse-rusage)
 
@@ -145,11 +146,13 @@
 
 (define (parse-file fip)
   (define mgraph (create-makegraph))
+  (define root-id (mcons "<ROOT>" "top"))
   (define root (create-target "<ROOT>"))
   (set-makegraph-root! mgraph root)
 
   (define (parse-line line ts prqs? dirs)
-    (define t (car ts))
+    (define tid (caar ts))
+    (define t (cdar ts)) ;; (car ts) is a pair of <tid, target>
     (cond
       [(equal? "" line)
        (read-file ts prqs? dirs)]
@@ -160,11 +163,24 @@
       ;; set field in target appropriately
       [(no-need-to-remake? line) =>
        (lambda (tname)
+         ;; Done with this target. Can assume its mfile is correct?
+         ;; Check if it exists in graph.
+         ;; if it doesnt exist in graph add it.
          (unless t
            (error 'parse-file "Expected t to be a target"))
          (unless (equal? tname (target-name t))
            (error 'parse-file "Expected no need to remake ~a got ~a" (target-name t) tname))
+
+         (set-target-remake?! t #f)
+
+         (if (target-in-graph? mgraph tid)
+             (printf "Throwing away target structure for target: ~a because one already exists in graph\n" tid)
+             (begin (printf "Adding target structure for target ~a to graph\n" tid)
+                    (add-target-to-makegraph mgraph tid t))) ;; added to graph.
+         
          (read-file (cdr ts) (cdr prqs?) dirs))]
+
+         
       [(must-remake? line) =>
        (lambda (tname)
          (unless t
@@ -187,9 +203,11 @@
            [(entering-directory? nline) =>
             (lambda (p)
               (define dir (cdr p))
+              (set-mcdr! tid dir) ;; change mfile of target we are considering.
               (set-target-mfile! t dir)
               (read-file ts prqs? (cons p dirs)))]
            [else
+            (set-mcdr! tid (cdar dirs)) ;; change mfile of target we are considering.
             (set-target-mfile! t (cdar dirs))
             (parse-line nline ts prqs? dirs)]))]
       
@@ -213,6 +231,14 @@
            (error 'parse-file "Target is #f\n"))
          (unless (equal? tname (target-name t))
            (error 'parse-file "Successfully remade target ~a expected to remake target ~a" tname (target-name t)))
+
+         ;; check if target exists in graph already.
+         ;; I don't think it should exist. so throw an error if it does
+         (if (target-in-graph? mgraph tid)
+             (error 'parse-line "Target ~a already exists in graph but we just successfully made it" tid)
+             (begin (printf "Adding target structure for target ~a to graph\n" tid)
+                    (add-target-to-makegraph mgraph tid t))) ;; added to graph.
+         
          (read-file (cdr ts) (cdr prqs?) dirs))]
       
       [(finished-prerequisites? line) =>
@@ -226,21 +252,19 @@
       ;; starting a new target. 
       [(considering-target-file? line) =>
        (lambda (tname)
-         ;; target could be a duplicate. wont know until later.
-         (define ntarget
-           (cond
-             [#f ;(target-in-graph mgraph tname) =>
-              identity]
-             [else
-              (let ([tmp (create-target tname)])
-                (add-target-to-makegraph mgraph tmp)
-                tmp)]))
+         (define ntarget-id (mcons tname (cdar dirs))) ;; because mfile may change later.
+         (define ntarget (let ([tmp (create-target tname)])
+                           (set-target-mfile! tmp (cdar dirs))
+                           tmp))
+         ;; don't add to graph until we know its new.
          
          (when t
            (if (car prqs?) ;; prereq of t?
-               (add-dep t ntarget)
-               (add-child t ntarget)))
-         (read-file (cons ntarget ts) (cons #t prqs?) dirs))]
+               (add-dep t ntarget-id)
+               (add-child t ntarget-id)))
+
+         (read-file (cons (cons ntarget-id ntarget) ts)
+                    (cons #t prqs?) dirs))]
       
       ;; run information
       [(argv? line) =>
@@ -261,12 +285,14 @@
     (define line (read-full-line fip))
     (parse-line line ts prqs? dirs))
 
-  (read-file (list root) (list #f) (list (cons 0 "top")))
+  (read-file (list (cons root-id root)) (list #f) (list (cons 0 "top")))
   mgraph)
 
 (define (parse-rusage file-path)
   (define file (open-input-file file-path #:mode 'text))
   (define result (parse-file file))
+  ;; remove duplicate targets
+  (collapse-targets result)
   (close-input-port file)
   result)
 
