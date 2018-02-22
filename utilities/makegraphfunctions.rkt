@@ -102,11 +102,12 @@
           (target-deps v))))
   
   (apply string-append
-         (append (for/fold ([accu "strict digraph {\n"])
-                           ([val (in-hash-values)])
-                   (append accu
-                           (create-dotfile-edges val)))
-                 "}\n")))
+         (cons "strict digraph {\n"
+               (append (for/fold ([accu '()])
+                                 ([val (in-hash-values targets)])
+                         (append accu
+                                 (create-dotfile-edges val)))
+                       (list "}\n")))))
 ;; ----------------------------------------------------------------------
             
          
