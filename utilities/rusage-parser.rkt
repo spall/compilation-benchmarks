@@ -91,6 +91,9 @@
     [else
      #f]))
 
+(define (child-cmd? cmd)
+  (string-contains? cmd "make"))
+
 (define EXPECTED-NUM 13)
 
 ;; return #f or rusage-data structure
@@ -274,7 +277,9 @@
            [(rusage-info? nline cmd) =>
             (lambda (info)
               (when t
-                (add-data-to-target! t info)))]
+                (if (child-cmd? cmd)
+                    (add-mdata-to-target! t info)
+                    (add-data-to-target! t info))))]
            [else
             (printf "Expected times line to follow argv line ~a got ~a instead\n" line nline)])
          (read-file ts prqs? dirs))]

@@ -11,6 +11,7 @@
 (define rusage? (make-parameter #f))
 (define nd? (make-parameter #f))
 (define time-target? (make-parameter #f))
+(define span? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -21,6 +22,9 @@
    [("-t" "--target-time") tname
     "Print target time for target with provided name"
     (time-target? tname)]
+   [("-s" "--span")
+    "Print span for make"
+    (span? #t)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -53,6 +57,12 @@
            (loop (cdr ts_))))]
       [else
        (printf "Couldn't find target ~a in graph\n" (time-target?))])))
+
+(when (span?)
+  (define fakeroot (makegraph-root graph))
+  (define realroot (get-target graph (car (target-children fakeroot))))
+  (define s (span realroot graph))
+  (printf "span is ~a\n" s))
 
 (when (create-dotfile?)
   (define fp (open-output-file (create-dotfile?) #:exists 'replace))

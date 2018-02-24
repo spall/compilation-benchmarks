@@ -4,16 +4,16 @@
          racket/string
          "makegraph.rkt")
 
-(provide longest-dep-path
-         calculate-target-time
-         get-target
+(provide calculate-target-time
+         get-targets
          create-dotfile-string
          print-all-targets-and-mfiles
-         collapse-targets)
+         collapse-targets
+         span)
 
 
 ;; time in seconds or #f
-(define (calculate-target-time t)
+(define (calculate-target-time t graph)
   (cond
     [(target-remake? t) 
      (define data (target-data t))
@@ -29,7 +29,7 @@
      #f]))
 
 ;; return a list of possible targets
-(define (get-target graph tname)
+(define (get-targets graph tname)
   (define targets (makegraph-targets graph))
   (for/fold ([tgs '()])
             ([val (in-hash-values targets)])
@@ -37,13 +37,35 @@
         (cons val tgs)
         tgs)))
 
-;; TODO
-(define (span root)
-  (void))
+(define (span root graph)
+  ;; Span(root) = longest time down deps path.
+  ;;              + Sum of the times of the pink paths
 
-(define (longest-dep-path root)
-  ;; TODO: complete redo
-  (void))
+  ;; loop through deps and calculate span for each one.
+  (define maxdep (let loop1 ([deps (target-deps root)]
+                             [max 0])
+                   (cond
+                     [(empty? deps)
+                      max]
+                     [else
+                      (define t (get-target graph (car deps)))
+                      (define tspan (span t graph))
+                      (loop1 (cdr deps) (if (> tspan max)
+                                            tspan
+                                            max))])))
+
+  (define sumchildren (let loop2 ([children (target-children root)]
+                                  [sum 0])
+                        (cond
+                          [(empty? children)
+                           sum]
+                          [else
+                           (define t (get-target graph (car children)))
+                           (define tspan (span t graph))
+                           (loop2 (cdr children) (+ tspan sum))])))
+
+  (define ttime (calculate-target-time root graph))
+  (+ ttime maxdep sumchildren))
 
 (define (print-all-targets-and-mfiles graph name)
   (define targets (hash-keys (makegraph-targets graph)))
@@ -96,8 +118,14 @@
       
   (define (create-dotfile-edges v)
     (append
-     (map (helper v targets child-color)
-          (target-children v))
+     (map (lambda (c i)
+            (define t (hash-ref targets c (lambda ()
+                                            (error 'create-dotfile "Failed to find ~a among graph's targets" c))))
+            (format "\"~a~a\" -> \"~a~a\" [label=~a, color=~a];\n" (target-name v) (target-id v)
+                    (target-name t) (target-id t) i child-color))
+          (reverse (target-children v))
+          (range 1 (+ 1 (length (target-children v)))))
+     
      (map (helper v targets dep-color)
           (target-deps v))))
   
