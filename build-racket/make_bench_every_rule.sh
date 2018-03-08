@@ -53,7 +53,7 @@ printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
-tout=($( time (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu &>> $printsfile ) &&  (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu install &>> $printsfile ) 2>&1 )) # parens on outside turn output into an array.
+tout=($( time ((make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu &>> $printsfile ) &&  (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu install &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -90,7 +90,7 @@ do
 
     printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
-    tout=($( time (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu &>> $printsfile) &&  (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu install &>> $printsfile ) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time ((make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu &>> $printsfile) &&  (make --debug=v SHELL="~/compilation-benchmarks/build-racket/rusage sh" -j $cpu install &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
