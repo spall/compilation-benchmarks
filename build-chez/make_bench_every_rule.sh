@@ -11,7 +11,8 @@ makepath=$5
 tarpath=$6
 installprefix=$7
 
-shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage sh"
+shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage /bin/bash"
+makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
 
 path=$(pwd)
 
@@ -36,9 +37,13 @@ echo "Cleaning"
 
 rm -rf ${makepath}
 
+rm -rf ${installprefix}
+
 echo "un-taring"
 
-tar -xzf ${tarpath}
+tar -xf ${tarpath}
+
+mkdir -p ${installprefix}
 
 cd ${makepath}
 
@@ -52,7 +57,7 @@ touch $printsfile
 
 # TODO: want to time this as well and represent in graph
 # TODO: fix shell path  to be on local disc
-tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (make --debug=v SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
+tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v MAKE="{makeshell}" SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -72,14 +77,14 @@ do
  
     cd ${makepath}/..
 
-    ls
-
     rm -rf ${makepath}
 
-    ls
+    rm -rf ${installprefix}
 
     echo "un-taring"
-    tar -xzf ${tarpath}
+    tar -xf ${tarpath}
+
+    mkdir -p ${installprefix}
 
     cd ${makepath}
 
@@ -87,7 +92,7 @@ do
 
     printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
-    tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (make --debug=v SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
+    tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time

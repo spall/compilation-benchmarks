@@ -10,7 +10,8 @@ interval=$4
 makepath=$5
 tarpath=$6
 
-shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage sh"
+shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage /bin/bash"
+makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
 
 path=$(pwd)
 
@@ -57,10 +58,7 @@ printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
-env PLT_SETUP_OPTIONS="-j $cpu"
-env SELF_RACKET_FLAGS="-W debug"
-
-tout=($( time ((../configure &>> $printsfile) && (make --debug=v SHELL="${shellpath}" -j $cpu &>> $printsfile ) &&  (make --debug=v SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
+tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile ) &&  (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -103,10 +101,7 @@ do
 
     touch $printsfile
     
-    env PLT_SETUP_OPTIONS="-j $cpu"
-    env SELF_RACKET_FLAGS="-W debug"
-
-    tout=($( time ((../configure &>> $printsfile) && (make --debug=v SHELL="${shellpath}" -j $cpu &>> $printsfile) &&  (make --debug=v SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile) &&  (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
