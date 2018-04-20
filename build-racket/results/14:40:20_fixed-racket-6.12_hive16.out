@@ -1,0 +1,6 @@
+version | CPU count | real | user | sys
+fixed-racket-6.12 1 35m48.979s 102m49.586s 14m27.799s
+fixed-racket-6.12 4 32m12.110s 104m31.684s 14m45.297s
+fixed-racket-6.12 8 31m2.730s 103m9.644s 14m48.212s
+fixed-racket-6.12 12 30m56.431s 103m17.100s 14m46.273s
+fixed-racket-6.12 16 30m44.066s 103m16.411s 14m34.050s
