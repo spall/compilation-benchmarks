@@ -2,16 +2,21 @@
 
 (require racket/cmdline
          racket/list
-         "make2graph.rkt"
+         ;"make2graph.rkt"
          "rusage-parser.rkt"
+         ;"parse-deps.rkt"  ;; change name of this file?
          "makegraphfunctions.rkt"
          "makegraph.rkt")
 
-(define create-dotfile? (make-parameter #f))
-(define rusage? (make-parameter #f))
+(define create-dotfile? (make-parameter #f)) 
+(define rusage? (make-parameter #f)) ;; is there rusage data?
+(define racket? (make-parameter #f)) ;; build graph of racket modules built during raco setup portion of build
 (define nd? (make-parameter #f))
 (define time-target? (make-parameter #f))
+(define work? (make-parameter #f))
 (define span? (make-parameter #f))
+(define pspeed? (make-parameter #f))
+(define slackness? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -22,9 +27,21 @@
    [("-t" "--target-time") tname
     "Print target time for target with provided name"
     (time-target? tname)]
+   [("-w" "--work")
+    "Print work for make"
+    (work? #t)]
    [("-s" "--span")
     "Print span for make"
     (span? #t)]
+   [("--predicted-speed") pcount
+    "Print predicted speed when using provided processor count"
+    (pspeed? pcount)]
+   [("--parallel-slackness") pcount
+    "Calculates parallel slackness with provided processor count"
+    (slackness? pcount)]
+   [("-m" "--modules-graph")
+    "Build graph of racket modules build during build"
+    (racket? #t)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -42,28 +59,44 @@
     [(rusage?)
      (parse-rusage file-path)]
     [(nd?)
-     (parse-dry-run file-path)]
+     (void)
+     #;(parse-dry-run file-path)]
     [else
      (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
 
-(when (time-target?)
-  (let ([ts (get-target graph (time-target?))])
-    (cond
-      [ts
-       (let loop ([ts_ ts])
-         (unless (empty? ts_)
-           (let ([t (car ts_)])
-             (printf "Time for target ~a in makefile ~a is ~a seconds.\n" (target-name t) (target-mfile t) (calculate-target-time t)))
-           (loop (cdr ts_))))]
-      [else
-       (printf "Couldn't find target ~a in graph\n" (time-target?))])))
+(define (parse-ts fp)
+  (void))
+(define (build-module-graph a1 a2)
+  (void))
+(define (populate-with-timing-info a1 a2)
+  (void))
+
+(define rgraph
+  (cond
+    [(racket?)
+     (let-values ([(tinfo cpaths ppaths) (parse-ts file-path)])
+       (let ([g (build-module-graph cpaths ppaths)])
+         (populate-with-timing-info g tinfo)
+         g))]
+    [else
+     #f]))
+
+(when (work?)
+  (define w (work (makegraph-root graph) graph))
+  (printf "Work is ~a\n" w))
 
 (when (span?)
-  (define fakeroot (makegraph-root graph))
-  (define realroot (get-target graph (car (target-children fakeroot))))
-  (define s (span realroot graph))
+  (define s (span (makegraph-root graph) graph))
   (printf "span is ~a\n" s))
 
+(when (pspeed?)
+  (define p (predicted-speed graph (string->number (pspeed?))))
+  (printf "Predicted speed for ~a processors is ~a\n" (pspeed?) p))
+
+(when (slackness?)
+  (define s (parallel-slackness graph (slackness?)))
+  (printf "Parallel slackness for ~a processors is ~a\n" (slackness?) s))
+                                                                                  
 (when (create-dotfile?)
   (define fp (open-output-file (create-dotfile?) #:exists 'replace))
   (display (create-dotfile-string graph) fp)
