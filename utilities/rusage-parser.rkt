@@ -1,95 +1,47 @@
 #lang racket/base
 
-(require racket/string
+(require racket/match
+         racket/string
          racket/list
-         racket/match
-         (only-in racket/function
-                  identity)
          "makegraph.rkt"
-         "makegraphfunctions.rkt")
+         (only-in"makegraphfunctions.rkt"
+                 collapse-targets)
+         "flags.rkt")
 
 (provide parse-rusage)
 
-(define (starts-with? words to-match)
-  (cond
-    [(empty? to-match)
-     #t]
-    [(empty? words)
-     #f]
-    [(equal? (car words) (car to-match))
-     (starts-with? (cdr words) (cdr to-match))]
-    [else
-     #f]))
+(define (ends-semicolon? str)
+  (string-suffix? str ";"))
 
-(define (get-target-name str)
-  (string-trim (string-trim (string-trim str "." #:left? #f) "'" #:left? #f) "`" #:right? #f))
+(define (read-full-line fip)
+  (let loop ()
+    (define line (read-line fip))
+    (cond
+      [(or (equal? "" line)
+           (eof-object? line))
+       line]
+      [(string-suffix? (car (reverse (string-split line))) "\\")
+       (string-append (string-trim line "\\" #:left? #f)
+                      " "
+                      (loop))]
+      [else
+       line])))
 
-(define (helper line to-match)
-  (define words (string-split (string-trim line " " #:repeat? #t)))
-  (and (starts-with? words to-match)
-       (get-target-name (last words))))
+(define (clean-target-name str)
+  (string-trim (string-trim (string-trim (string-trim
+                                          (string-trim str "." #:left? #f)
+                                          ";" #:left? #f)
+                                         "'" #:left? #f) "`" #:right? #f)))
 
-;; return #f or target
-(define (no-need-to-remake? line)
-  (helper line (list "No" "need" "to" "remake" "target")))
+(define (clean-dir-name str)
+  (string-trim (string-trim str "'" #:left? #f) "`" #:right? #f))
 
-;; return #f or target
-(define (must-remake? line)
-  (helper line (list "Must" "remake" "target")))
+(define (check-current-target tname t caller)
+  (unless (equal? tname (target-name t))
+    (error 'check-current-target "~a: Expected target ~a got target ~a" caller (target-name t) tname)))
 
-;; return #f or target
-(define (successfully-remade? line)
-  (helper line (list "Successfully" "remade" "target" "file")))
-
-;; return #f or target
-(define (considering-target-file? line)
-  (helper line (list "Considering" "target" "file")))
-
-(define (invoking-recipe? line)
-  (helper line (list "Invoking" "recipe" "from")))
-
-;; return #f or path
-(define (entering-directory? line)
-  ;; make[n]:
-  (define words (string-split (string-trim line " " #:repeat? #t)))
-  ;; first word should be make something...
-  (cond
-    [(starts-with? (cdr words) (list "Entering" "directory"))
-     ;; get make and number
-     (cons (string-trim (cadr (string-split (string-trim (car words) ":" #:left? #f) "[")) "]" #:left? #f)
-      (string-trim (string-trim (last words) "'" #:left? #f) "`" #:right? #f))]
-    [else
-     #f]))
-
-;; return #f or path
-(define (leaving-directory? line)
-  (define words (string-split (string-trim line " " #:repeat? #t)))
-  ;; first word should be make something...
-  (cond
-    [(starts-with? (cdr words) (list "Leaving" "directory"))
-     ;; get make and number
-     (cons (string-trim (cadr (string-split (string-trim (car words) ":" #:left? #f) "[")) "]" #:left? #f)
-             (string-trim (string-trim (last words) "'" #:left? #f) "`" #:right? #f))]
-    [else
-     #f]))
-
-;; return #f or target
-(define (finished-prerequisites? line)
-  (helper line (list "Finished" "prerequisites" "of" "target" "file")))
-
-;; return #f or command
-(define (argv? line)
-  (define words (string-split (string-trim line " " #:repeat? #t)))
-  (define tmp (string-split (car words) "=" #:trim? #f))
-  (cond
-    [(equal? (car tmp) "argv")
-     (unless (equal? (car words) "argv=sh")
-       (printf "Expected ~a to start line but got ~a\n" "argv=sh" (car words)))
-     (unless (equal? (car (cdr words)) "-c")
-       (printf "Expected ~a but got ~a\n" "-c" (car (cdr words))))
-     (string-join (cdr (cdr words)) " ")]
-    [else
-     #f]))
+(define (submake-cmd? cmd)
+  (string-contains? cmd "make"))
 
 (define EXPECTED-NUM 13)
 
@@ -130,204 +82,214 @@
     [else
      #f]))
 
-(define (read-full-line fip)
-  (let loop ()
-    (define line (read-line fip))
-    (cond
-      [(or (equal? "" line)
-           (eof-object? line))
-       line]
-      [(equal? (car (reverse (string-split line))) "\\")
-       (string-append (string-trim line "\\" #:left? #f)
-                      " "
-                      (loop))]
-      [else
-       line])))
-
 (define (parse-file fip)
   (define mgraph (create-makegraph))
   (define root-id (mcons "<ROOT>" "top"))
   (define root (create-target "<ROOT>"))
   (set-makegraph-root! mgraph root)
 
-  (define (parse-line line ts prqs? dirs)
-    (define tid (caar ts))
-    (define t (cdar ts)) ;; (car ts) is a pair of <tid, target>
-    (cond
-      [(equal? "" line)
-       (read-file ts prqs? dirs)]
-      [(eof-object? line)
-       (unless (equal? root t)
-         (error 'parse-file "Unexpected end of line before end of target ~a" (target-name t)))]
-      
-      ;; set field in target appropriately
-      [(no-need-to-remake? line) =>
-       (lambda (tname)
-         ;; Done with this target. Can assume its mfile is correct?
-         ;; Check if it exists in graph.
-         ;; if it doesnt exist in graph add it.
-         (unless t
-           (error 'parse-file "Expected t to be a target"))
-         (unless (equal? tname (target-name t))
-           (error 'parse-file "Expected no need to remake ~a got ~a" (target-name t) tname))
+  (define (parse-line line ts prqs? ttimes dirs)
+    (define tid (caar ts)) ;; mutable pair <name,makefile>
+    ;; 2nd thing is makefile; which may be #f
+    (define t (cdar ts)) ;; (car ts) is a pair of <tid,target>
 
-         (set-target-remake?! t #f)
+    (define (process-finished-target)
+      ;; mfile is going to be top of dirs.....
+      (when (list? (car dirs))
+        (error 'process-finished-target "Car of dirs is ~a is a list" dirs))
+      
+      (set-mcdr! tid (car dirs)) ;; just a dir
+      (set-target-mfile! t (car dirs))
+      
+      (when (empty? (cdr ts))
+        (error 'parse-line "Expected at least one more target to be in stack"))
+      (when (empty? (cdr prqs?))
+        (error 'parse-line "Expected at least one more prq? to be in stack"))
+      
+      (define parent (cdadr ts))
+      
+      (if (cadr prqs?)
+          (add-dependency parent tid (car ttimes))
+          (add-recipe parent tid (car ttimes)))
+      
+      (cond
+        [(target-in-graph? mgraph tid)
+         (when DEBUG
+           (printf "Target is already in graph for ~a; going to consolidate them.\n" tid))
+         (define tmp (get-target mgraph tid))
 
-         (if (target-in-graph? mgraph tid)
-             (printf "Throwing away target structure for target: ~a because one already exists in graph\n" tid)
-             (begin (printf "Adding target structure for target ~a to graph\n" tid)
-                    (add-target-to-makegraph mgraph tid t))) ;; added to graph.
+         ;; I think we want to combine edges; because processing a target is really
+         ;; us processing a build path... and if we "reprocess" a target, we've just
+         ;; processed another build path and we want to record that path in the graph
+         ;; with new edges.
+         (set-target-deps! tmp (append (target-deps t) (target-deps tmp)))
+         ;; TODO: should the above guarantee edges are sorted?
+         ;; Will edges of t always have lower numbers than edges already in tmp?
          
-         (read-file (cdr ts) (cdr prqs?) dirs))]
+         ;; TODO: same question here.
+         (set-target-recipes! tmp (append (target-recipes t) (target-recipes tmp)))]
+        [else
+         ;; add target to graph
+         (when DEBUG
+           (printf "Finished processing ~a; adding to graph.\n" tid))
+         (add-target-to-makegraph mgraph tid t)]))
+    
+    (when (eof-object? line)
+      (unless (equal? root t)
+        (error 'parse-file "Unexpected end of line before end of target ~a" (target-name t))))
 
+    (unless (eof-object? line)
+      (match (string-split line)
+        [`("Toplevel" "make" "directory" ,dir)
+         (when dirs
+           (error 'parse-line "Expected dirs to be #f; dirs is ~a" dirs))
+         (read-file ts prqs? ttimes (list dir))]
+        [`("File" ,target "was" "considered" "already." . ,rest)
+         (define tname (clean-target-name target))
+         (check-current-target tname t "Was considered already")
+         (process-finished-target)
+         (read-file (cdr ts) (if (car prqs?)
+                                 (cons #f (cdr prqs?))
+                                 prqs?) (cdr ttimes) dirs)]
+        [`("No" "need" "to" "remake" "target" ,target . ,rest)
+         (define tname (clean-target-name target))
+         (check-current-target tname t "No need to remake")
          
-      [(must-remake? line) =>
-       (lambda (tname)
-         (unless t
-           (error 'parse-file "Expected t to be a target"))
-         (unless (equal? tname (target-name t))
-           (error 'parse-file "Expected must remake ~a got ~a" (target-name t) tname))
-         (set-target-remake?! t #t)
-         (read-file ts prqs? dirs))]
-      
-      [(invoking-recipe? line) =>
-       (lambda (tname)
-         (unless t
-           (error 'parse-file "Expected t to be a target"))
-         (unless (equal? tname (target-name t))
-           (error 'parse-file "Expected to invoke recipe for ~a got ~a" (target-name t) tname))
+         (process-finished-target)
          
-         ;; next line should be entering directory?
-         (define nline (read-full-line fip))
-         (cond
-           [(entering-directory? nline) =>
-            (lambda (p)
-              (define dir (cdr p))
-              (set-mcdr! tid dir) ;; change mfile of target we are considering.
-              (set-target-mfile! t dir)
-              (read-file ts prqs? (cons p dirs)))]
-           [else
-            (set-mcdr! tid (cdar dirs)) ;; change mfile of target we are considering.
-            (set-target-mfile! t (cdar dirs))
-            (parse-line nline ts prqs? dirs)]))]
-      
-      [(entering-directory? line) =>
-       (lambda (p)
-         (define dir (cdr p))
-         (read-file ts prqs? (cons p dirs)))]
-      [(leaving-directory? line) =>
-       (lambda (p) ;; should identify current dir on top of dirs stack
-         (define n (car p))
-         (define dir (cdr p))
-         (cond
-           [(and (equal? n (caar dirs)) (equal? dir (cdar dirs)))
-            (read-file ts prqs? (cdr dirs))]
-           [else
-            (error 'parse-line "Leaving directory ~a with n ~a but top of stack is ~a\n\n" dir n (car dirs))]))]
-      
-      [(successfully-remade? line) => ;; finished this target
-       (lambda (tname)
-         (unless t
-           (error 'parse-file "Target is #f\n"))
-         (unless (equal? tname (target-name t))
-           (error 'parse-file "Successfully remade target ~a expected to remake target ~a" tname (target-name t)))
-
-         ;; check if target exists in graph already.
-         ;; I don't think it should exist. so throw an error if it does
-         (if (target-in-graph? mgraph tid)
-             (error 'parse-line "Target ~a already exists in graph but we just successfully made it" tid)
-             (begin (printf "Adding target structure for target ~a to graph\n" tid)
-                    (add-target-to-makegraph mgraph tid t))) ;; added to graph.
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs)]
+        [`("Successfully" "remade" "target" "file" ,target . ,rest)
+         (define tname (clean-target-name target))
+         (check-current-target tname t "Successfully remade")
          
-         (read-file (cdr ts) (cdr prqs?) dirs))]
-      
-      [(finished-prerequisites? line) =>
-       (lambda (tname)
-         (unless t
-           (error 'parse-file "Target is #f\n"))
-         (unless (equal? tname (target-name t))
-           (error 'parse-file "Expected to finish prereqs of ~a instead finished prereqs of ~a\n" (target-name t) tname))
-         (read-file ts (cons #f (cdr prqs?)) dirs))]
-      
-      ;; starting a new target. 
-      [(considering-target-file? line) =>
-       (lambda (tname)
-         (define ntarget-id (mcons tname (cdar dirs))) ;; because mfile may change later.
-         (define ntarget (let ([tmp (create-target tname)])
-                           (set-target-mfile! tmp (cdar dirs))
-                           tmp))
-         ;; don't add to graph until we know its new.
+         (process-finished-target)
          
-         (when t
-           (if (car prqs?) ;; prereq of t?
-               (add-dep t ntarget-id)
-               (add-child t ntarget-id)))
-
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs)] ;; reset ttimes?
+        [`("Pruning" "file" ,target . ,rest)
+         (define tname (clean-target-name target))
+         ;; make has decided this target doesnt need to be considered. so
+         ;; add it with a time of 0
+         
+         (define ntarget-id (mcons tname (car dirs)))
+         
+         ;; check if target already exists in graph
+         (unless (target-in-graph? mgraph ntarget-id) ;; create target and add to graph
+           (when DEBUG
+             (printf "Pruning target ~a; but does not already exist in graph; adding.\n" ntarget-id))
+           (define tmp (create-target tname))
+           (set-target-mfile! tmp (mcdr ntarget-id))
+           (add-target-to-makegraph mgraph ntarget-id tmp))
+         
+         (if (car prqs?)
+             (add-dependency t ntarget-id 0)
+             (add-recipe t ntarget-id 0))
+         
+         (read-file ts prqs? ttimes dirs)]
+        [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
+         (define tname (clean-target-name target))
+         (check-current-target tname t "must remake target")
+         
+         (read-file ts prqs? ttimes dirs)]
+        [`("Invoking" "recipe" "from" ,mkfile "to" "update" "target" ,target . ,rest) ;; not sure what this line indicates......
+         (define tname (clean-target-name target))
+         (check-current-target tname t "invoking recipe")
+         
+         (read-file ts prqs? ttimes dirs)]
+        [`("CURDIR:" ,dir . ,rest) ;; rest should be empty
+         ;; TODO: says what dir shell command executed in.....
+         ;; this won't work if recipe doesnt execute any shell commands.
+         ;; for example; recipe that only has prerequisites and doesnt do anything else....
+         
+         ;; How do we deal with that case?
+         ;; NOT SURE YET
+         ;; TODO: DO WE EVEN NEED THIS ANYMORE?
+         
+         (read-file ts prqs? ttimes dirs)]
+        [`("executing" "sub-make:" , cmd ... ";" "in" "directory" . ,rest)
+         ;; parse cmd looking for -C dir
+         (define cdir (car rest))
+         (when DEBUG
+           (printf "current directory is ~a\n" cdir))
+         
+         (match cmd
+           [`("-C" ,dir . ,rcmd)
+            ;; change directory here
+            (define ndir (string-append cdir "/" dir))
+            (when DEBUG
+              (printf "new directory after recursive make is ~a\n" ndir))
+            (read-file ts prqs? ttimes (cons ndir dirs))]
+           [else ;; also change directory here because might have done a cd dir ;; make ...
+            (read-file ts prqs? ttimes (cons cdir dirs))])]
+        
+        [`("finishing" "sub-make:" , cmd ... ";" "in" "directory" . ,rest)
+         (define cdir (car rest))
+         (when DEBUG
+           (printf "current directory is ~a\n" cdir))
+         
+         (match cmd
+           [`("-C" ,dir . ,rcmd) ;; change directory here
+            (define ndir (string-append cdir "/" dir))
+            (unless (equal? (car dirs) ndir)
+              (error 'parse-line "Expected to be leaving directory ~a; but leaving ~a instead." (car dirs) ndir))
+            (read-file ts prqs? ttimes (cdr dirs))]
+           [else ;; also change directory here...
+            (unless (equal? (car dirs) cdir)
+              (error 'parse-line "Expected to be leaving directory ~a; but leaving ~a instead." (car dirs) cdir))
+            (read-file ts prqs? ttimes (cdr dirs))])]
+        
+        [`("Finished" "prerequisites" "of" "target" "file" ,target . ,rest)
+         (define tname (clean-target-name target))
+         (check-current-target tname t "finished prereqs")
+         (read-file ts (cons #f (cdr prqs?)) ttimes dirs)]
+        [`("Considering" "target" "file" ,target . ,rest)
+         (define tname (clean-target-name target))
+         #| considering a new target.  MIGHT need to create a new 
+         target structure.
+         |#
+         (define ntarget-id (mcons tname #f)) ;; haven't determined makefile yet.
+         (define ntarget (create-target tname))
+         
          (read-file (cons (cons ntarget-id ntarget) ts)
-                    (cons #t prqs?) dirs))]
-      
-      ;; run information
-      [(argv? line) =>
-       (lambda (cmd)
+                    (cons #t prqs?) (cons '() ttimes) dirs)]
+        [`("argv=/bin/bash" "-c" . ,rest)
+         (define cmd (string-join rest " "))
          (define nline (read-full-line fip))
+         #| executed part of a target recipe.
+         If the cmd (rest) is a recursive make call; the time for that is part of edge
+         leaving this target.
+         
+         if the cmd is NOT a recursive make call; then the time is part of this target
+         exclusively and we want to3 return this time to "outer" target    
+         |#
          (cond
            [(rusage-info? nline cmd) =>
             (lambda (info)
-              (when t
-                (add-data-to-target! t info)))]
+              (read-file ts prqs? (if (submake-cmd? cmd)
+                                      ttimes
+                                      (cons (cons info (car ttimes))
+                                            (cdr ttimes)))
+                         dirs))]
            [else
-            (printf "Expected times line to follow argv line ~a got ~a instead\n" line nline)])
-         (read-file ts prqs? dirs))]
-      [else
-       (read-file ts prqs? dirs)]))
-  
-  (define (read-file ts prqs? dirs)
+            (when DEBUG 
+              (printf "Expected times line to follow argv line; got ~a instead\n" nline))
+            (error 'parse-file "Got ~a following ~a instead of rusageinfo" nline line)
+            (read-file ts prqs? ttimes dirs)])]
+        [else
+         (read-file ts prqs? ttimes dirs)])))
+    
+  (define (read-file ts prqs? ttimes dirs)
     (define line (read-full-line fip))
-    (parse-line line ts prqs? dirs))
-
-  (read-file (list (cons root-id root)) (list #f) (list (cons 0 "top")))
+    (parse-line line ts prqs? ttimes dirs))
+  
+  (read-file (list (cons root-id root)) (list #f) (list '()) #f)
+  (add-target-to-makegraph mgraph root-id root)
   mgraph)
-
-(define (parse-rusage file-path)
+      
+(define (parse-rusage file-path [debug? #f])
   (define file (open-input-file file-path #:mode 'text))
   (define result (parse-file file))
+  (set-DEBUG! debug?)
   ;; remove duplicate targets
   (collapse-targets result)
   (close-input-port file)
   result)
-
-  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
