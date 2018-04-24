@@ -9,6 +9,7 @@ MAX=$3
 interval=$4
 makepath=$5
 tarpath=$6
+installprefix=$7
 
 shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage /bin/bash"
 makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
@@ -36,19 +37,15 @@ echo "Cleaning"
 
 rm -rf ${makepath}
 
+rm -rf ${installprefix}
+
 echo "un-taring"
 
-tar -xzf ${tarpath}
+tar -xf ${tarpath}
 
-echo "Replacing broken rktio_process.c"
+mkdir -p ${installprefix}
 
-cp rktio_process.c ${makepath}/src/rktio/
-
-cd ${makepath}/src
-
-mkdir build
-
-cd build
+cd ${makepath}
 
 echo "running configure and make" 
 
@@ -58,7 +55,9 @@ printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
-tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile ) &&  (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
+# TODO: want to time this as well and represent in graph
+# TODO: fix shell path  to be on local disc
+tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v MAKE="{makeshell}" SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -78,30 +77,22 @@ do
  
     cd ${makepath}/..
 
-    ls
-
     rm -rf ${makepath}
 
-    ls
+    rm -rf ${installprefix}
 
     echo "un-taring"
-    tar -xzf ${tarpath}
+    tar -xf ${tarpath}
 
-    cp rktio_process.c ${makepath}/src/rktio/
+    mkdir -p ${installprefix}
 
-    cd ${makepath}/src
+    cd ${makepath}
 
-    mkdir build
-    
-    cd build
-    
     echo "running configure and make"
 
     printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
-    touch $printsfile
-    
-    tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile) &&  (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
