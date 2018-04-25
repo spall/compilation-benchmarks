@@ -16,7 +16,7 @@ makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
 
 path=$(pwd)
 
-tstamp=$(date +%T)
+tstamp=$(date +%s)
 outfile="$path/results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
@@ -55,8 +55,6 @@ printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
-# TODO: want to time this as well and represent in graph
-# TODO: fix shell path  to be on local disc
 tout=($( time ((./configure --threads --installprefix=${installprefix} &>> $printsfile ) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v MAKE="{makeshell}" SHELL="${shellpath}" -j $cpu install &>> $printsfile)) 2>&1)) 
 
 rt=${tout[1]} # real time

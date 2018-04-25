@@ -15,7 +15,7 @@ makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
 
 path=$(pwd)
 
-tstamp=$(date +%T)
+tstamp=$(date +%s)
 outfile="$path/results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
