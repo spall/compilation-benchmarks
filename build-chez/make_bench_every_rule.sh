@@ -19,10 +19,10 @@ tstamp=$(date +%s)
 outfile="$path/../../chez-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
-mkdir -p ${path}/../../ocaml-results
+mkdir -p ${path}/../../chez-results
 
 # create rusage-out directory if it doesnt exist
-mkdir -p ${path}/../../ocaml-results/rusage-out
+mkdir -p ${path}/../../chez-results/rusage-out
 
 installprefix="${path}/../prefix"
 
