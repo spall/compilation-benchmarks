@@ -10,19 +10,19 @@ interval=$4
 makepath=$5
 tarpath=$6
 
-shellpath="/data/beehive/home.local/sjspall/compilation-benchmarks/rusage /bin/bash"
-makeshell="/data/beehive/home.local/sjspall/compilation-benchmarks/make.sh"
-
 path=$(pwd)
 
+shellpath="${path}/../rusage /bin/bash"
+makeshell="${path}/../make.sh"
+
 tstamp=$(date +%s)
-outfile="$path/results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
+outfile="${path}/../../racket-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
-mkdir -p $(pwd)/results
+mkdir -p ${path}/../../racket-results
 
 # create rusage-out directory if it doesnt exist
-mkdir -p $path/results/rusage-out
+mkdir -p $path/../../racket-results/rusage-out
 
 touch $outfile
 # write first line to file
@@ -54,13 +54,11 @@ echo "running configure and make"
 
 cpu=1
 
-printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
+printsfile="${path}/../../racket-results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
 
 touch $printsfile
 
 tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile ) && ((make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]') &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
-
-# (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]' &>> $printsfile)
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -71,21 +69,16 @@ echo "make done"
 # write result to file
 echo "$version $cpu $rt $ut $st" >> $outfile
 
+echo "Cleaning"
+ 
+cd ${makepath}/..
+
+rm -rf ${makepath}
+
 cpu=$interval
 
 while [ "$cpu" -le "$MAX" ] # need the spaces
 do
-    # clean
-    echo "Cleaning"
- 
-    cd ${makepath}/..
-
-    ls
-
-    rm -rf ${makepath}
-
-    ls
-
     echo "un-taring"
     tar -xzf ${tarpath}
 
@@ -97,13 +90,13 @@ do
     
     cd build
     
+    printsfile="${path}/../../racket-results/rusage-out/${tstamp}_tmp.out"
+
+    touch ${printsfile}
+
     echo "running configure and make"
-
-    printsfile="$path/results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
-
-    touch $printsfile
     
-    tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile) &&  ((make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]') &>> $printsfile )) 2>&1 )) # parens on outside turn output into an array.
+    tout=($( time ((../configure &>> ${printsfile}) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu &>> ${printsfile}) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu install &>> ${printsfile})) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
@@ -113,6 +106,12 @@ do
 
     # write result to file
     echo "$version $cpu $rt $ut $st" >> $outfile
+    
+    echo "Cleaning"
+ 
+    cd ${makepath}/..
+
+    rm -rf ${makepath}
     
     cpu=$((cpu + interval))
 done
