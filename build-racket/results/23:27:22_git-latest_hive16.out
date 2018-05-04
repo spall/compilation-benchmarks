@@ -1,6 +1,0 @@
-version | CPU count | real | user | sys
-git-latest 1 6m52.591s 6m35.632s 0m19.089s
-git-latest 4 42m21.354s 106m28.137s 23m53.749s
-git-latest 8 26m58.985s 100m17.940s 21m43.899s
-git-latest 12 23m34.888s 100m33.665s 23m1.649s
-git-latest 16 23m3.145s 103m30.346s 26m42.992s
