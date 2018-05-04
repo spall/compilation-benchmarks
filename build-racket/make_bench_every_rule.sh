@@ -12,21 +12,16 @@ tarpath=$6
 
 path=$(pwd)
 
-shellpath="${path}/../rusage /bin/bash"
-makeshell="${path}/../make.sh"
 
 tstamp=$(date +%s)
-outfile="${path}/../../racket-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
+outfile="${path}/../../racket-results/${tstamp}_${version}_${machine}.csv"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p ${path}/../../racket-results
 
-# create rusage-out directory if it doesnt exist
-mkdir -p $path/../../racket-results/rusage-out
-
 touch $outfile
 # write first line to file
-echo "version | CPU count | real | user | sys" >> $outfile
+echo "version, CPU count, real, user, sys" >> $outfile
 
 mkdir -p ${makepath}
 
@@ -54,11 +49,9 @@ echo "running configure and make"
 
 cpu=1
 
-printsfile="${path}/../../racket-results/rusage-out/${tstamp}_${version}_${machine}_$cpu.out"
+printsfile="${path}/tmp.out"
 
-touch $printsfile
-
-tout=($( time ((../configure &>> $printsfile) && (echo "Toplevel make directory $PWD" &>> $printsfile ) && (make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu &>> $printsfile ) && ((make --debug=v SELF_RACKET_FLAGS="-W debug" PLT_SETUP_OPTIONS="-j $cpu" MAKE="${makeshell}" SHELL="${shellpath}" -j $cpu install | ts '[%.s]') &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
+tout=($( time ((../configure &>> $printsfile) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu &>> $printsfile ) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu install &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -67,7 +60,7 @@ st=${tout[5]} # sys  time
 echo "make done"
 
 # write result to file
-echo "$version $cpu $rt $ut $st" >> $outfile
+echo "$version, $cpu, $rt, $ut, $st" >> $outfile
 
 echo "Cleaning"
  
@@ -90,10 +83,6 @@ do
     
     cd build
     
-    printsfile="${path}/../../racket-results/rusage-out/${tstamp}_tmp.out"
-
-    touch ${printsfile}
-
     echo "running configure and make"
     
     tout=($( time ((../configure &>> ${printsfile}) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu &>> ${printsfile}) && (make PLT_SETUP_OPTIONS="-j $cpu" -j $cpu install &>> ${printsfile})) 2>&1 )) # parens on outside turn output into an array.
@@ -105,7 +94,7 @@ do
     echo "make done"
 
     # write result to file
-    echo "$version $cpu $rt $ut $st" >> $outfile
+    echo "$version, $cpu, $rt, $ut, $st" >> $outfile
     
     echo "Cleaning"
  
@@ -115,6 +104,8 @@ do
     
     cpu=$((cpu + interval))
 done
+
+rm -f ${path}/tmp.out
 
 echo "Done"
 

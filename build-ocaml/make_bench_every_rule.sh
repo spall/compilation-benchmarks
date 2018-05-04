@@ -13,7 +13,7 @@ tarpath=$6
 path=$(pwd)
 
 tstamp=$(date +%s)
-outfile="${path}/../../ocaml-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
+outfile="${path}/../../ocaml-results/${tstamp}_${version}_${machine}.csv"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p ${path}/../../ocaml-results
@@ -24,7 +24,7 @@ mkdir -p ${installprefix}
 
 touch $outfile
 # write first line to file
-echo "version | CPU count | real | user | sys" >> $outfile
+echo "version, CPU count, real, user, sys" >> $outfile
 
 mkdir -p ${makepath}
 
@@ -64,7 +64,7 @@ rm -rf ${path}/tmp
 rm -rf ${installprefix}
 
 # write result to file
-echo "$version $cpu $rt $ut $st" >> $outfile
+echo "$version, $cpu, $rt, $ut, $st" >> $outfile
 
 cpu=$interval
 
@@ -90,7 +90,7 @@ do
     echo "make done"
 
     # write result to file
-    echo "$version $cpu $rt $ut $st" >> $outfile
+    echo "$version, $cpu, $rt, $ut, $st" >> $outfile
     
     # cleaning
     echo "Cleaning"
@@ -107,7 +107,7 @@ do
 done
 
 rm -rf ${path}/tmp
-#rm -f ${path}/tmp.out
+rm -f ${path}/tmp.out
 
 echo "Done"
 
