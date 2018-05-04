@@ -7,6 +7,8 @@ makepath=$3
 tarpath=$4
 
 # 1. add custom make script to front of path
+
+oldpath=$PATH # save old path so we can restore when we are done
 export PATH="/data/beehive/home.local/sjspall/compilation-benchmarks:$PATH" 
 # 2. set MAKEJ = 1
 export MAKEJ="1"
@@ -44,6 +46,8 @@ env TMPDIR="${path}/tmp"
 echo "building"
 
 ./configure --prefix ${installprefix} &>> ${OUTPUTFILE} && make world && make install
+
+export PATH="$oldpath" # restore old path
 
 echo "finished building"
 echo "Debugging output written to ${OUTPUTFILE}"
