@@ -1,7 +1,7 @@
 #!/bin/sh
 
-echo "executing sub-make: $@ ; in directory $PWD"
+echo "executing sub-make: $CURSCNUM : $@ ; in directory $PWD"
 
-time -f 'submake-argv=%C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' /usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/bash" "$@"
+time -f 'submake-argv= %C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' /usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/bash" "$@"
 
-echo "finishing sub-make: $@ ; in directory $PWD"
+echo "finishing sub-make: $CURSCNUM : $@ ; in directory $PWD"

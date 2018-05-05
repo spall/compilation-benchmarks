@@ -18,6 +18,10 @@ tstamp=$(date +%s)
 outfile="${path}/../../ocaml-results/rusage-out/${tstamp}_${version}_${machine}.debug" #maybe change extension
 export OUTPUTFILE="${outfile}"
 
+# 4. set up counter for shell commands
+export SCNUM="/data/beehive/home.local/sjspall/compilation-benchmarks/scnum"
+echo 1 > $SCNUM # write 1 to file
+
 # create results directories if they don't exist
 mkdir -p ${path}/../../ocaml-results
 mkdir -p ${path}/../../ocaml-results/rusage-out

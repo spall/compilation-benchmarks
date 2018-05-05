@@ -1,3 +1,11 @@
 #!/bin/sh
 
-time -f 'argv=%C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' "$@"
+old=$(cat $SCNUM)
+
+export CURSCNUM=$old
+
+echo "$((old+1))" > $SCNUM
+
+echo "executing shell-command: $old $@"
+
+time -f 'argv= %C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' "$@" && echo "finished shell-command: $old"
