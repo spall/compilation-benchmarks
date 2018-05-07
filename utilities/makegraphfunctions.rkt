@@ -1,7 +1,8 @@
-#lang racket/base
+#lang errortrace racket/base
 
 (require racket/list
          racket/string
+         racket/match
          "makegraph.rkt"
          "flags.rkt")
 
@@ -13,8 +14,25 @@
          span
          parallel-slackness
          predicted-speed
-
+         verify-edge-times
+         
          print-graph)
+
+(define (get-last-edge t)
+  (cond
+    [(and (not (empty? (target-deps t)))
+          (not (empty? (target-recipes t))))
+     (define lastdep (car (target-deps t)))
+     (define lastrecipe (car (target-recipes t)))
+     (if (< (target-id lastdep) (target-id lastrecipe)) ;;
+         lastdep
+         lastrecipe)]
+    [(not (empty? (target-deps t)))
+     (car (target-deps t))]
+    [(not (empty? (target-recipes t)))
+     (car (target-recipes t))]
+    [else
+     #f]))
 
 ;; return a list of possible targets
 (define (get-targets graph tname)
@@ -89,19 +107,23 @@
       (unless (hash-ref visited e #f)
         (error 'work "Never visited edge ~a during work calculation!" e))))
   w)
-                                  
                               
 (define (sum-times ttimes)
   (cond
     [(empty? ttimes)
      0]
-    [(list? ttimes)
-     (+ (rusage-data-elapsed (car ttimes))
-        (sum-times (cdr ttimes)))]
+    [(rusage-data? (car ttimes))
+     (cond
+       [(not (rusage-data-submake? (car ttimes)))
+        (+ (rusage-data-elapsed (car ttimes))
+           (sum-times (cdr ttimes)))]
+       [else
+        (sum-times (cdr ttimes))])]
     [else
-     (unless (number? ttimes)
-       (error 'sum-times "ttimes is neither a list nor a number ~a" ttimes))
-     ttimes]))
+     (unless (number? (car ttimes))
+       (error 'sum-times "neither rusage-data nor a number ~a" (car ttimes)))
+     (+ (car ttimes)
+        (sum-times (cdr ttimes)))]))
 
 ;; Span(root) = longest time down deps path.
 ;;              + Sum of the times of the pink paths
@@ -127,7 +149,7 @@
            
            (values max_ leid)])))
 
-    (when DEBUG
+    (when #t
       (when (> spandeps 0)
         (printf "For root <~a,~a>; span of dependencies is ~a\n" (target-name root) (target-mfile root) spandeps)))
 
@@ -149,7 +171,7 @@
           [else
            (values sum (edge-id e))])))
 
-    (when DEBUG
+    (when #t
       (when (> spanchildren 0)
         (printf "For root <~a,~a>; sum of children's spans is ~a\n" (target-name root) (target-mfile root) spanchildren)))
     
@@ -179,8 +201,9 @@
   (exact->inexact (/ work_ (* pcount span_))))
 
 #|
-   TODO: rewrite this algorithm to work better with make...... 
    brent's law 
+   Should be an UPPER BOUND on the amount of time to execute work with
+   pcount processors.
 |#
 (define (predicted-speed graph pcount)
   (define work_ (work (makegraph-root graph) graph))
@@ -220,15 +243,70 @@
                                    (loop (cdr chlds))]
                                   [else
                                    (cons (car chlds) (loop (cdr chlds)))]))))))
-      
-      
 
+(define (verify-edge-times graph)
+  (define (driver root lbound ubound)
+    (define-values (workdeps leid_)
+      (for/fold ([sum 0]
+                 [leid ubound])
+                ([e (reverse (target-deps root))])
+        ;; each edge has a list of data. Want to verify data that is a "submake" shell call.
+        (cond
+          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
+           (define t (driver (get-target graph (edge-end e))
+                             (edge-id e)
+                             leid))
+           (define sumtimes (sum-times (edge-data e)))
+
+           (for ([info (edge-data e)])
+             (when (and (rusage-data? info) (rusage-data-submake? info))
+               (printf "Going to verify time for ~a\n" (rusage-data-cmd info))
+               (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
+                 (when (> diff 0)
+                   (printf "Difference is ~a\n" diff))
+                 (when (< diff 0)
+                   (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
+           (values (+ sum sumtimes t) (edge-id e))]
+          [else
+           (values sum leid)])))
+
+    (define-values (workrecipes __)
+      (for/fold ([sum 0]
+                 [leid leid_])
+                ([e (reverse (target-recipes root))])
+        (cond
+          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
+           (define t (driver (get-target graph (edge-end e))
+                             (edge-id e)
+                             leid))
+           (define sumtimes (sum-times (edge-data e)))
+           (for ([info (edge-data e)])
+             (when (and (rusage-data? info) (rusage-data-submake? info))
+               (printf "Going to verify time for ~a\n" (rusage-data-cmd info))
+               (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
+                 (when (> diff 0)
+                   (printf "Difference is ~a\n" diff))
+                 (when (< diff 0)
+                   (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
+
+           (values (+ sum sumtimes t)
+                   (edge-id e))]
+          [else
+           (values sum (edge-id e))])))
+
+    (+ workdeps workrecipes))
+  
+  (driver (makegraph-root graph) (- (apply min (map edge-id (append (target-deps (makegraph-root graph))
+                                                             (target-recipes (makegraph-root graph)))))
+                                    1)
+          1))
+    
 ;; ------------------------ graphviz dot file --------------------------------
 
 (define child-color "red") ;"blue")
 (define dep-color "green") ;"red")
 
-;; returns a string represting a grpah in the dot language
+;; returns a string represting a graph in the dot language
 (define (create-dotfile-string g)
   (define targets (makegraph-targets g))
   (define (helper v targets color)

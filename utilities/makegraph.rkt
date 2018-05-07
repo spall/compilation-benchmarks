@@ -17,6 +17,8 @@
          create-rusage-data
          add-recipe
          add-dependency
+         add-edge
+         remove-edge
          all-fields-set?
          add-target-to-makegraph
          target-in-graph?
@@ -45,6 +47,37 @@
           #f  ; mfile
           '() ; dependencies
           '())) ; recipes
+
+(define (insert-edge e ls)
+  (cond
+    [(empty? ls)
+     (list e)]
+    [(< (edge-id e) (edge-id (car ls)))
+     (cons e ls)]
+    [else
+     (cons (car ls)
+           (insert-edge e (cdr ls)))]))
+
+
+
+(define (remove-edge t e)
+  (define (helper ls)
+    (cond
+      [(empty? ls)
+       ls]
+      [(equal? e (car ls))
+       (cdr ls)]
+      [else
+       (cons (car ls) (helper e (cdr ls)))]))
+  
+  (if (equal? 'dep (edge-type e))
+      (set-target-deps! t (helper (target-deps t)))
+      (set-target-recipes! t (helper (target-recipes t)))))
+
+(define (add-edge t e)
+  (if (equal? 'dep (edge-type e))
+      (set-target-deps! t (insert-edge e (target-deps t)))
+      (set-target-recipes! t (insert-edge e (target-recipes t)))))
 
 ;; adds a recipe edge
 (define (add-recipe t recipe info)
@@ -82,15 +115,15 @@
 
 (struct rusage-data (cmd rc elapsed user system maxrss
                          avgrss ins outs minflt majflt
-                         swaps avgmem avgdata)
+                         swaps avgmem avgdata submake?)
   #:mutable #:transparent)
 
 (define (create-rusage-data cmd)
-  (rusage-data cmd #f #f #f #f #f #f #f #f #f #f #f #f #f))
+  (rusage-data cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
 
 (define (all-fields-set? rds)
   (andmap identity
-          (struct->list rds)))
+          (reverse (cdr (reverse (struct->list rds))))))
 
 ;; ---------------- end of rusage data code --------------------
 

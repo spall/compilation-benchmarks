@@ -64,6 +64,9 @@
     [else
      (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
 
+(printf "Going to verify times in graph\n")
+(verify-edge-times graph)
+
 (define (parse-ts fp)
   (void))
 (define (build-module-graph a1 a2)
@@ -89,9 +92,14 @@
   (define s (span (makegraph-root graph) graph))
   (printf "span is ~a\n" s))
 
+(when (and (span?) (work?))
+  (define parallelism (/ (work (makegraph-root graph) graph)
+                         (span (makegraph-root graph) graph)))
+  (printf "parallelism is ~a\n" parallelism))
+
 (when (pspeed?)
   (define p (predicted-speed graph (string->number (pspeed?))))
-  (printf "Predicted speed for ~a processors is ~a\n" (pspeed?) p))
+  (printf "Predicted upper bound for ~a processors is ~a seconds.\n" (pspeed?) p))
 
 (when (slackness?)
   (define s (parallel-slackness graph (slackness?)))
