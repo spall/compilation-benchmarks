@@ -144,9 +144,6 @@
   (define FAKE (create-target "FAKE"))
   (set-makegraph-root! mgraph root)
 
-  ;; TODO how to check how many targets we have processed during a submake call....
-  ;; this is how we can tell if it was a make for multiple targets.......
-
   (define (parse-line line ts prqs? ttimes dirs submakes shcalls)
     (define tid (caar ts)) ;; mutable pair <name,makefile>
     ;; 2nd thing is makefile; which may be #f
@@ -262,7 +259,7 @@
          (read-file ts prqs? ttimes dirs submakes shcalls)]
         [`("executing" "shell-command:" ,n_ ,shell "-c" . ,cmd)
          (define n (string->number n_))
-         (define nshcall (create-shcall (string-join cmd " ") n)) ;; TODO: is n a number?
+         (define nshcall (create-shcall (string-join cmd " ") n))
          (define nextline (read-full-line fip))
          ;; if next line is an executing sub-make then this is a duplicate.
          (match (string-split nextline)
