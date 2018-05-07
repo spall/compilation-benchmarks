@@ -1,4 +1,4 @@
-#lang errortrace racket/base
+#lang racket/base
 
 (require racket/list
          racket/string
@@ -15,6 +15,7 @@
          parallel-slackness
          predicted-speed
          verify-edge-times
+         verify-edges
          
          print-graph)
 
@@ -55,7 +56,7 @@
         (cond
           [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
            (when (hash-ref visited e #f)
-             (error 'work "Visited edge ~a a 2nd time!" e))
+             (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
            (hash-set! visited e #t)
            (values (+ sum (sum-times (edge-data e))
                       (driver (get-target graph (edge-end e))
@@ -76,7 +77,7 @@
         (cond
           [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
            (when (hash-ref visited e #f)
-             (error 'work "Visited edge ~a a 2nd time!" e))
+             (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
            (hash-set! visited e #t)
            (values (+ sum (sum-times (edge-data e))
                       (driver (get-target graph (edge-end e))
@@ -244,6 +245,31 @@
                                   [else
                                    (cons (car chlds) (loop (cdr chlds)))]))))))
 
+(define (verify-edges graph)
+
+  (for ([t (in-hash-values (makegraph-targets graph))])
+    (define es (make-hash))
+    (unless (empty? (target-deps t))
+      (hash-set! es (car (target-deps t)) #t)
+      (for/fold ([last (edge-id (car (target-deps t)))])
+                ([e (cdr (target-deps t))])
+        (when (hash-ref es e #f)
+          (printf "Target <~a,~a> has more than one copy of edge ~a\n" (target-name t) (target-mfile t) (edge-id e)))
+        (hash-set! es e #t)
+        (when (< (edge-id e) last)
+          (printf "edge id ~a is less than last edge id ~a\n" (edge-id e) last))
+        (edge-id e)))
+    (unless (empty? (target-recipes t))
+      (hash-set! es (car (target-recipes t)) #t)
+      (for/fold ([last (edge-id (car (target-recipes t)))])
+                ([e (cdr (target-recipes t))])
+        (when (hash-ref es e #f)
+          (printf "Target <~a,~a> has more than one copy of edge ~a\n" (target-name t) (target-mfile t) (edge-id e)))
+        (hash-set! es e #t)
+        (when (< (edge-id e) last)
+          (printf "edge id ~a is less than last edge id ~a\n" (edge-id e) last))
+        (edge-id e)))))
+
 (define (verify-edge-times graph)
   (define (driver root lbound ubound)
     (define-values (workdeps leid_)
@@ -260,9 +286,10 @@
 
            (for ([info (edge-data e)])
              (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "Going to verify time for ~a\n" (rusage-data-cmd info))
+               (printf "\nGoing to verify time for ~a\n" (rusage-data-cmd info))
                (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
                  (when (> diff 0)
+                   (printf "reported time is ~a; sys is ~a; time we summed is ~a " (rusage-data-elapsed info) (rusage-data-system info)(+ t sumtimes))
                    (printf "Difference is ~a\n" diff))
                  (when (< diff 0)
                    (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
@@ -282,9 +309,10 @@
            (define sumtimes (sum-times (edge-data e)))
            (for ([info (edge-data e)])
              (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "Going to verify time for ~a\n" (rusage-data-cmd info))
+               (printf "\nGoing to verify time for ~a\n" (rusage-data-cmd info))
                (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
                  (when (> diff 0)
+                   (printf "reported time is ~a; sys is ~a; time we summed is ~a " (rusage-data-elapsed info) (rusage-data-system info) (+ t sumtimes))
                    (printf "Difference is ~a\n" diff))
                  (when (< diff 0)
                    (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
