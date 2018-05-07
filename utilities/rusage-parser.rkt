@@ -140,8 +140,6 @@
   (define mgraph (create-makegraph))
   (define root-id (mcons "<ROOT>" "top"))
   (define root (create-target "<ROOT>"))
-  (define FAKE-ID (mcons "FAKE" "top"))
-  (define FAKE (create-target "FAKE"))
   (set-makegraph-root! mgraph root)
 
   (define (parse-line line ts prqs? ttimes dirs submakes shcalls)
@@ -377,14 +375,22 @@
                     (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls))))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
+                    ;; create  new fake node.
+                    (define tmpname (symbol->string (gensym "FAKE")))
+                    (define tmp-FAKE-ID (mcons tmpname "top"))
+                    (define tmp-FAKE (create-target tmpname))
+                    (set-target-mfile! tmp-FAKE "top")
+                    ;; add to graph
+                    (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
+                    
                     (for ([last-edge last-edges])
-                      (add-edge FAKE last-edge)
+                      (add-edge tmp-FAKE last-edge)
                       (remove-edge t last-edge))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t FAKE-ID (list info))
+                    (add-recipe t tmp-FAKE-ID (list info))
                     
                     (read-file ts prqs? ttimes dirs submakes (cdr shcalls))]
                    [else ;; if this is not a submake......
@@ -438,14 +444,21 @@
                     (define last-edges (get-last-edges t count))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
+                    (define tmpname (symbol->string (gensym "FAKE")))
+                    (define tmp-FAKE-ID (mcons tmpname "top"))
+                    (define tmp-FAKE (create-target tmpname))
+                    (set-target-mfile! tmp-FAKE "top")
+                    ;; add to graph
+                    (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
+                    
                     (for ([last-edge last-edges])
-                      (add-edge FAKE last-edge)
+                      (add-edge tmp-FAKE last-edge)
                       (remove-edge t last-edge))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t FAKE-ID (list info))]
+                    (add-recipe t tmp-FAKE-ID (list info))]
                    [else
                     ;; add info to an edge
                     (define last-edge (get-last-edge t))
@@ -469,7 +482,6 @@
       
   (read-file (list (cons root-id root)) (list #f) (list '()) #f '() '())
   (add-target-to-makegraph mgraph root-id root)
-  (add-target-to-makegraph mgraph FAKE-ID FAKE)
   mgraph)
       
 (define (parse-rusage file-path [debug? #f])
@@ -477,6 +489,6 @@
   (define result (parse-file file))
   (set-DEBUG! debug?)
   ;; remove duplicate targets
-  (collapse-targets result)
+  ;(collapse-targets result)
   (close-input-port file)
   result)
