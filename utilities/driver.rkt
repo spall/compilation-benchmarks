@@ -10,6 +10,7 @@
 
 (define create-dotfile? (make-parameter #f)) 
 (define rusage? (make-parameter #f)) ;; is there rusage data?
+(define rusage-dir? (make-parameter #f)) ;; is path a directory with rusage data files?
 (define racket? (make-parameter #f)) ;; build graph of racket modules built during raco setup portion of build
 (define nd? (make-parameter #f))
 (define time-target? (make-parameter #f))
@@ -50,63 +51,86 @@
    [("-n" "--dry-run-output")
     "Parse output from 'make -nd'"
     (nd? #t)]
+   [("--rusage-dir")
+    "Provided path is to directory with rusage files in it"
+    (rusage-dir? #t)]
    ;; add other things here.
    #:args (path)
    path))
 
-(define graph
-  (cond
-    [(rusage?)
-     (parse-rusage file-path)]
-    [(nd?)
-     (void)
-     #;(parse-dry-run file-path)]
-    [else
-     (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
-
-(printf "Going to verify times in graph\n")
-(verify-edge-times graph)
-
-(define (parse-ts fp)
-  (void))
-(define (build-module-graph a1 a2)
-  (void))
-(define (populate-with-timing-info a1 a2)
-  (void))
-
-(define rgraph
-  (cond
-    [(racket?)
-     (let-values ([(tinfo cpaths ppaths) (parse-ts file-path)])
-       (let ([g (build-module-graph cpaths ppaths)])
-         (populate-with-timing-info g tinfo)
-         g))]
-    [else
-     #f]))
-
-(when (work?)
-  (define w (work (makegraph-root graph) graph))
-  (printf "Work is ~a\n" w))
-
-(when (span?)
-  (define s (span (makegraph-root graph) graph))
-  (printf "span is ~a\n" s))
-
-(when (and (span?) (work?))
-  (define parallelism (/ (work (makegraph-root graph) graph)
-                         (span (makegraph-root graph) graph)))
-  (printf "parallelism is ~a\n" parallelism))
-
-(when (pspeed?)
-  (define p (predicted-speed graph (string->number (pspeed?))))
-  (printf "Predicted upper bound for ~a processors is ~a seconds.\n" (pspeed?) p))
-
-(when (slackness?)
-  (define s (parallel-slackness graph (slackness?)))
-  (printf "Parallel slackness for ~a processors is ~a\n" (slackness?) s))
-                                                                                  
-(when (create-dotfile?)
-  (define fp (open-output-file (create-dotfile?) #:exists 'replace))
-  (display (create-dotfile-string graph) fp)
-  (printf "Wrote graph to ~a\n" (create-dotfile?))
-  (close-output-port fp))
+(cond
+  [(rusage-dir?)
+   (define dir-path file-path)
+   (unless (directory-exists? dir-path)
+     (error 'driver "~a is not a directory path" dir-path))
+   
+   (define-values (sum len) (for/fold ([sum 0]
+                                       [len 0])
+                                      ([ru-file (in-directory dir-path)])
+                              (let ([graph (parse-rusage ru-file)])
+                                (values (+ sum (work (makegraph-root graph) graph))
+                                        (+ 1 len)))))
+   
+   (printf "Average work is ~a nanoseconds\n" (/ sum len))]
+  [else
+   (define graph
+     (cond
+       [(rusage?)
+        (parse-rusage file-path)]
+       [(nd?)
+        (void)
+        #;(parse-dry-run file-path)]
+       [else
+        (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
+   
+   ;(printf "going to verify graph edges\n")
+   ;(verify-edges graph)
+   ;(printf "Going to verify times in graph\n")
+   ;(verify-edge-times graph)
+   
+   
+   (define (parse-ts fp)
+     (void))
+   (define (build-module-graph a1 a2)
+     (void))
+   (define (populate-with-timing-info a1 a2)
+     (void))
+   
+   (define rgraph
+     (cond
+       [(racket?)
+        (let-values ([(tinfo cpaths ppaths) (parse-ts file-path)])
+          (let ([g (build-module-graph cpaths ppaths)])
+            (populate-with-timing-info g tinfo)
+            g))]
+       [else
+        #f]))
+   
+   (when (work?)
+     (define w (work (makegraph-root graph) graph))
+     (printf "Work is ~a\n" w))
+   
+   (when (span?)
+     (define s (span (makegraph-root graph) graph))
+     (printf "span is ~a\n" s))
+   
+   (when (and (span?) (work?))
+     (define parallelism (/ (work (makegraph-root graph) graph)
+                            (span (makegraph-root graph) graph)))
+     (printf "parallelism is ~a\n" parallelism))
+   
+   (when (pspeed?)
+     (define p (predicted-speed graph (string->number (pspeed?))))
+     (printf "Predicted upper bound for ~a processors is ~a seconds.\n" (pspeed?) p))
+   
+   (when (slackness?)
+     (define s (parallel-slackness graph (slackness?)))
+     (printf "Parallel slackness for ~a processors is ~a\n" (slackness?) s))
+   
+   (when (create-dotfile?)
+     (define fp (open-output-file (create-dotfile?) #:exists 'replace))
+     (display (create-dotfile-string graph) fp)
+     (printf "Wrote graph to ~a\n" (create-dotfile?))
+     (close-output-port fp))
+   ])
+   
