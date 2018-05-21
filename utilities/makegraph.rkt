@@ -34,9 +34,56 @@
     (set! TID (+ 1 TID))))
 
 ;; ----------- Node to represent makefile target ------------------
-(struct target (id name mfile deps recipes) #:mutable #:transparent)
-(struct edge (end data type id) #:mutable #:transparent)
-;; end is name?
+(define (target-print t port mode)
+  (when mode (write-string "<" port))
+  (define recur (case mode
+                  [(#t) write]
+                  [(#f) display]
+                  [else (lambda (p port) (print p port mode))]))
+  
+  (write (target-id t) port)
+  (write-string ", " port)
+  (write (target-name t) port)
+  (write-string ", " port)
+  (write (target-mfile t) port)
+  (write-string "\n" port)
+  (write-string "Dependencies:\n" port)
+  (for ([d (target-deps t)])
+    (recur d port)
+    (write-string "\n" port))
+  (write-string "Recipes:\n" port)
+  (for ([r (target-recipes t)])
+    (recur t port)
+    (write-string "\n" port))
+  (when mode (write-string ">" port)))
+
+(struct target (id name mfile deps recipes)
+  #:methods gen:custom-write
+  [(define write-proc target-print)]
+  #:mutable #:transparent)
+
+(define (edge-print e port mode)
+  (when mode (write-string "<" port))
+  (define recur (case mode
+                  [(#t) write]
+                  [(#f) display]
+                  [else (lambda (p port) (print p port mode))]))
+
+  (write (edge-id e) port)
+  (write-string "\n" port)
+  (write-string "End: " port)
+  (recur (edge-end e) port)
+  (write-string "\n" port)
+  (write-string "Data:\n" port)
+  (for ([d (edge-data e)])
+    (recur d port)
+    (write-string "\n" port))
+  (when mode (write-string ">" port)))
+
+(struct edge (end data type id) ;; end is name?
+  #:methods gen:custom-write
+  [(define write-proc edge-print)]
+  #:mutable #:transparent)
 
 ;; mfile children data mdata remake? time
 (struct node (id name deps) #:mutable #:transparent)
@@ -92,8 +139,25 @@
 ;; ----------------- End of target code ------------------------------
 
 ;; ----------------- graph to represent makefile graph ---------------
+(define (makegraph-print mg port mode)
+  (when mode (write-string "<" port))
+  (define recur (case mode
+                  [(#t) write]
+                  [(#f) display]
+                  [else (lambda (p port) (print p port mode))]))
+  (write-string "Root: " port)
+  (recur (makegraph-root mg) port)
+  (write-string "\n" port)
+  (write-string "Targets: \n" port)
+  (for ([t (makegraph-targets mg)])
+    (recur t port)
+    (write-string "\n"))
+  (when mode (write-string ">" port)))
 
-(struct makegraph (targets root) #:mutable #:transparent)
+(struct makegraph (targets root)
+  #:methods gen:custom-write
+  [(define write-proc makegraph-print)]
+  #:mutable #:transparent)
 
 (define (create-makegraph)
   (makegraph (make-hash) #f))
@@ -113,9 +177,16 @@
 
 ;; -------------- structure to represent rusage data -----------
 
+(define (rusage-data-print rd port mode)
+  (when mode (write-string "<" port))
+  (write-string "todo" port)
+  (when mode (write-string ">" port)))
+
 (struct rusage-data (cmd rc elapsed user system maxrss
                          avgrss ins outs minflt majflt
                          swaps avgmem avgdata submake?)
+  #:methods gen:custom-write
+  [(define write-proc rusage-data-print)]
   #:mutable #:transparent)
 
 (define (create-rusage-data cmd)
