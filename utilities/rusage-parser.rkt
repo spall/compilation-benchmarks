@@ -10,8 +10,7 @@
 
 (provide parse-rusage)
 
-(define MAKE "/usr/bin/make")
-
+(define SHELLCOUNT 0)
 (struct shcall (cmd n num-submakes duplicate?) #:mutable #:transparent)
 (define (create-shcall cmd n)
   (shcall cmd n 0 #f))
@@ -95,7 +94,15 @@
   (unless (equal? tname (target-name t))
     (error 'check-current-target "~a: Expected target ~a got target ~a" caller (target-name t) tname)))
 
-
+(define (elapsed? line cmd)
+  (define words (string-split (string-trim line " " #:repeat? #t)))
+  (cond
+    [(equal? (car words) "elapsed=")
+     (define rds (create-rusage-data cmd))
+     (set-rusage-data-elapsed! rds (string->number (cadr words)))
+     rds]
+    [else
+     #f]))
 
 (define EXPECTED-NUM 13)
 
@@ -200,9 +207,25 @@
     (unless (eof-object? line)
       (match (string-split line)
         [`("executing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
-         #;(when dirs
-           (error 'parse-line "Expected dirs to be #f; dirs is ~a" dirs))
-         (read-file ts prqs? ttimes (list (car rest)) submakes shcalls)]
+         (define tname (symbol->string (gensym "TOP")))
+         (define ntarget-id (mcons tname (car rest)))
+         (define ntarget (create-target tname))
+         (set-target-mfile! ntarget (car rest))
+         
+         (read-file (cons (cons ntarget-id ntarget) ts)
+                    (cons #f prqs?) (cons '() ttimes)
+                    (list (car rest)) submakes shcalls)]
+        [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
+
+         (define parent (cdadr ts)) ;; should be <ROOT>
+         (add-recipe parent tid (car ttimes))
+
+         (when (target-in-graph? mgraph tid)
+           (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
+
+         (add-target-to-makegraph mgraph tid t)
+         
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) (cdr dirs) submakes shcalls)]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
@@ -255,7 +278,9 @@
          (check-current-target tname t "invoking recipe")
          
          (read-file ts prqs? ttimes dirs submakes shcalls)]
-        [`("executing" "shell-command:" ,n_ ,shell "-c" . ,cmd)
+        [`("executing" "shell-command:" ,n_ . ,cmd)
+         (when (equal? (target-name t) "<ROOT>")
+           (printf "Not considering a target and running cmd ~a\n" cmd))
          (define n (string->number n_))
          (define nshcall (create-shcall (string-join cmd " ") n))
          (define nextline (read-full-line fip))
@@ -340,7 +365,7 @@
          (define timesline (read-full-line fip))
          
          (cond
-           [(rusage-info? timesline cmd) =>
+           [(elapsed? timesline cmd) =>
             (lambda (info)
               ;; read next line. should be a finished shell-command line
               (define finishline (let loop ([ln (read-full-line fip)])
@@ -394,6 +419,8 @@
                     
                     (read-file ts prqs? ttimes dirs submakes (cdr shcalls))]
                    [else ;; if this is not a submake......
+                    (set! SHELLCOUNT (+ 1 SHELLCOUNT))
+                    
                     (read-file ts prqs? (cons (cons info (car ttimes))
                                               (cdr ttimes))
                                dirs submakes (cdr shcalls))])]
@@ -414,7 +441,7 @@
                                   ln)))
          
          (cond
-           [(rusage-info? timesline argv-cmd) =>
+           [(elapsed? timesline argv-cmd) =>
             (lambda (info)
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
@@ -491,4 +518,5 @@
   ;; remove duplicate targets
   ;(collapse-targets result)
   (close-input-port file)
+  (printf "SHELLCOUNT IS ~a\n" SHELLCOUNT)
   result)

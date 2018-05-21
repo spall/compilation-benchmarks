@@ -90,9 +90,12 @@
     (when DEBUG
       (when (> workchildren 0)
         (printf "For root <~a,~a>; sum of children's work is ~a\n" (target-name root) (target-mfile root) workchildren)))
-    
+
+    (when DEBUG
+      (when (> (+ workdeps workchildren) 0)
+        (printf "for root <~a,~a>; work is ~a\n" (target-name root) (target-mfile root) (+ workdeps workchildren))))
     (+ workdeps workchildren))
-  
+
   (define w (driver root_ (- (apply min (map edge-id (append (target-deps root_)
                                                              (target-recipes root_))))
                              1)
@@ -108,7 +111,7 @@
       (unless (hash-ref visited e #f)
         (error 'work "Never visited edge ~a during work calculation!" e))))
   w)
-                              
+
 (define (sum-times ttimes)
   (cond
     [(empty? ttimes)
@@ -150,7 +153,7 @@
            
            (values max_ leid)])))
 
-    (when #t
+    (when DEBUG
       (when (> spandeps 0)
         (printf "For root <~a,~a>; span of dependencies is ~a\n" (target-name root) (target-mfile root) spandeps)))
 
@@ -172,7 +175,7 @@
           [else
            (values sum (edge-id e))])))
 
-    (when #t
+    (when DEBUG
       (when (> spanchildren 0)
         (printf "For root <~a,~a>; sum of children's spans is ~a\n" (target-name root) (target-mfile root) spanchildren)))
     
@@ -272,6 +275,7 @@
 
 (define (verify-edge-times graph)
   (define (driver root lbound ubound)
+    
     (define-values (workdeps leid_)
       (for/fold ([sum 0]
                  [leid ubound])
@@ -283,13 +287,13 @@
                              (edge-id e)
                              leid))
            (define sumtimes (sum-times (edge-data e)))
-
+           
+           
            (for ([info (edge-data e)])
              (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "\nGoing to verify time for ~a\n" (rusage-data-cmd info))
+               (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info)) 
                (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
                  (when (> diff 0)
-                   (printf "reported time is ~a; sys is ~a; time we summed is ~a " (rusage-data-elapsed info) (rusage-data-system info)(+ t sumtimes))
                    (printf "Difference is ~a\n" diff))
                  (when (< diff 0)
                    (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
@@ -309,10 +313,10 @@
            (define sumtimes (sum-times (edge-data e)))
            (for ([info (edge-data e)])
              (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "\nGoing to verify time for ~a\n" (rusage-data-cmd info))
+               (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info))
+
                (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
                  (when (> diff 0)
-                   (printf "reported time is ~a; sys is ~a; time we summed is ~a " (rusage-data-elapsed info) (rusage-data-system info) (+ t sumtimes))
                    (printf "Difference is ~a\n" diff))
                  (when (< diff 0)
                    (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
