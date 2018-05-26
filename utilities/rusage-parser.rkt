@@ -515,8 +515,5 @@
   (define file (open-input-file file-path #:mode 'text))
   (define result (parse-file file))
   (set-DEBUG! debug?)
-  ;; remove duplicate targets
-  ;(collapse-targets result)
   (close-input-port file)
-  (printf "SHELLCOUNT IS ~a\n" SHELLCOUNT)
   result)

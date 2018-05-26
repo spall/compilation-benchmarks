@@ -64,14 +64,38 @@
    (unless (directory-exists? dir-path)
      (error 'driver "~a is not a directory path" dir-path))
    
-   (define-values (sum len) (for/fold ([sum 0]
-                                       [len 0])
-                                      ([ru-file (in-directory dir-path)])
-                              (let ([graph (parse-rusage ru-file)])
-                                (values (+ sum (work (makegraph-root graph) graph))
-                                        (+ 1 len)))))
+   (define-values (sum predictions len)
+     (for/fold ([sum 0]
+                [preds '()]
+                [len 0])
+               ([ru-file (in-directory dir-path)])
+       (let ([graph (parse-rusage ru-file)])
+         (let ([work_ (work (makegraph-root graph) graph)])
+           (values (+ sum work_)
+                   (append (for/list ([tc (in-range 1 33)])
+                             (list tc (predicted-speed graph tc work_)
+                                   (predicted-speed-lower graph tc work_)))
+                           preds)
+                   (+ 1 len))))))
+   
+   ;; average predictions
+   (for ([tc (in-range 1 33)])
+     (let ([upred (exact->inexact
+                   (/ (apply +
+                             (map cadr (filter (lambda (p)
+                                                 (equal? tc (car p)))
+                                               predictions)))
+                      len))]
+           [lpred (exact->inexact
+                   (/ (apply + (map caddr (filter (lambda (p)
+                                                    (equal? tc (car p)))
+                                                  predictions)))
+                      len))])
+       ;; TODO: write result to file
+       (printf "~a, ~a, ~a\n" tc upred lpred)))
    
    (printf "Average work is ~a nanoseconds\n" (/ sum len))]
+   
   [else
    (define graph
      (cond
@@ -87,8 +111,7 @@
    ;(verify-edges graph)
    ;(printf "Going to verify times in graph\n")
    ;(verify-edge-times graph)
-   
-   
+     
    (define (parse-ts fp)
      (void))
    (define (build-module-graph a1 a2)
