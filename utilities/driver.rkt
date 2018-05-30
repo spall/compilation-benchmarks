@@ -73,7 +73,7 @@
          (let ([work_ (work (makegraph-root graph) graph)])
            (values (+ sum work_)
                    (append (for/list ([tc (in-range 1 33)])
-                             (list tc (predicted-speed graph tc work_)
+                             (list tc (predicted-speed-upper graph tc work_)
                                    (predicted-speed-lower graph tc work_)))
                            preds)
                    (+ 1 len))))))
@@ -143,7 +143,7 @@
      (printf "parallelism is ~a\n" parallelism))
    
    (when (pspeed?)
-     (define p (predicted-speed graph (string->number (pspeed?))))
+     (define p (predicted-speed-upper graph (string->number (pspeed?))))
      (printf "Predicted upper bound for ~a processors is ~a seconds.\n" (pspeed?) p))
    
    (when (slackness?)
