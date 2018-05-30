@@ -59,15 +59,15 @@
            (when (hash-ref visited e #f)
              (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
            (hash-set! visited e #t)
-           (define tmpwork (+ sum (sum-times (edge-data e))
+           (define tmpwork (+ (sum-times (edge-data e))
                               (driver (get-target graph (edge-end e))
                                       (edge-id e)
                                       leid)))
            (when DEBUG
              (when (> tmpwork 0)
-               (printf "For root ~a; work is ~a\n" (edge-end e) tmpwork)))
+               (printf "For root dep ~a; work is ~a\n" (edge-end e) tmpwork)))
            
-           (values tmpwork
+           (values (+ sum tmpwork)
                    (edge-id e))]
           [else
            (values sum leid)])))
@@ -81,15 +81,15 @@
            (when (hash-ref visited e #f)
              (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
            (hash-set! visited e #t)
-           (define tmpwork (+ sum (sum-times (edge-data e))
+           (define tmpwork (+ (sum-times (edge-data e))
                               (driver (get-target graph (edge-end e))
                                       (edge-id e)
                                       leid)))
            (when DEBUG
              (when (> tmpwork 0)
-               (printf "For root ~a: work is ~a\n" (edge-end e) tmpwork)))
+               (printf "For root recipe ~a: work is ~a\n" (edge-end e) tmpwork)))
              
-           (values tmpwork
+           (values (+ sum tmpwork)
                    (edge-id e))]
           [else
            (values sum (edge-id e))])))
@@ -226,9 +226,9 @@
   (exact->inexact (+ span_ (/ work_ pcount))))
 
 (define (predicted-speed-lower graph pcount [work_ #f] [span_ #f])
-  (when work_
+  (unless work_
     (set! work_ (work (makegraph-root graph) graph)))
-  (when span_
+  (unless span_
     (set! span_ (span (makegraph-root graph) graph)))
   (define speed (exact->inexact (/ work_ pcount)))
 
