@@ -1,11 +1,16 @@
 #!/bin/sh
 
-old=$(cat $SCNUM)
+old=$(cat ${SCNUM})
 
-export CURSCNUM=$old
+export CURSCNUM=${old}
 
-echo "$((old+1))" > $SCNUM
+echo "$((old+1))" > ${SCNUM}
 
-echo "executing shell-command: $old $@"
+echo "executing shell-command: $old $@" &>> ${OUTPUTFILE}
 
-time -f 'argv= %C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' "$@" && echo "finished shell-command: $old"
+ov1=$(date +%s%N)
+overhead=$((($(date +%s%N) - ${ov1})))
+
+tsl=$(date +%s%N) && "$@" && te=$(date +%s%N) && tt=$(((${te} - ${tsl} - ${overhead})))
+
+echo "argv= $@\n elapsed= ${tt}\n finished shell-command: ${old}" &>> ${OUTPUTFILE}
