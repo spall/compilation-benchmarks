@@ -1,7 +1,16 @@
 #!/bin/sh
 
-echo "executing sub-make: $CURSCNUM : $@ ; in directory $PWD"
+cdir=$PWD
 
-time -f 'submake-argv= %C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' /usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/bash" "$@"
+echo "executing sub-make: $CURSCNUM : $@ ; in directory $cdir" &>> ${OUTPUTFILE}
 
-echo "finishing sub-make: $CURSCNUM : $@ ; in directory $PWD"
+ov1=$(date +%s%N)
+overhead=$((($(date +%s%N) - ${ov1})))
+
+tsl=$(date +%s%N) 
+
+/usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/sh" "$@"
+
+tt=$((($(date +%s%N) - ${tsl} - ${overhead}))) 
+
+echo "submake-argv= $@\n elapsed= ${tt}\n finishing sub-make: $CURSCNUM : $@ ; in directory $cdir" &>> ${OUTPUTFILE}

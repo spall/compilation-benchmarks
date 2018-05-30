@@ -1,7 +1,16 @@
-#!/bin/sh
+#!/bin/bash
 
-echo "executing top-make: $@ ; in directory $PWD" &>> ${OUTPUTFILE}
+cdir=$PWD
 
-time -f 'topmake-argv= %C\n rc=%x elapsed=%e user=%U system=%S maxrss=%M avgrss=%t ins=%I outs=%O minflt=%R majflt=%F swaps=%W avgmem=%K avgdata=%D\n' /usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/bash" -j ${MAKEJ} "$@" &>> ${OUTPUTFILE} 
+echo "executing top-make: $@ ; in directory $cdir" &>> ${OUTPUTFILE}
 
-echo "finishing top-make: $@ ; in directory $PWD" &>> ${OUTPUTFILE}
+ov1=$(date +%s%N)
+overhead=$((($(date +%s%N) - ${ov1})))
+
+tsl=$(date +%s%N)
+
+/usr/bin/make --debug=v MAKE="submake" SHELL="rusage /bin/bash" -j ${MAKEJ} "$@" &>> ${OUTPUTFILE} 
+
+tt=$((($(date +%s%N) - ${tsl} - ${overhead})))
+
+echo "topmake-argv= $@\n elapsed= ${tt}\n finishing top-make: $@ ; in directory $cdir" &>> ${OUTPUTFILE}
