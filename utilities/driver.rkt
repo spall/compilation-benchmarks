@@ -94,7 +94,7 @@
        ;; TODO: write result to file
        (printf "~a, ~a, ~a\n" tc upred lpred)))
    
-   (printf "Average work is ~a nanoseconds\n" (/ sum len))]
+   (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ sum len)))]
    
   [else
    (define graph
