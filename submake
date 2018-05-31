@@ -13,4 +13,6 @@ tsl=$(date +%s%N)
 
 tt=$((($(date +%s%N) - ${tsl} - ${overhead}))) 
 
-echo "submake-argv= $@\n elapsed= ${tt}\n finishing sub-make: $CURSCNUM : $@ ; in directory $cdir" &>> ${OUTPUTFILE}
+echo "submake-argv= $@" &>> ${OUTPUTFILE}
+echo "elapsed= ${tt}" &>> ${OUTPUTFILE}
+echo "finishing sub-make: $CURSCNUM : $@ ; in directory $cdir" &>> ${OUTPUTFILE}

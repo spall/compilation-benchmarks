@@ -13,4 +13,6 @@ overhead=$((($(date +%s%N) - ${ov1})))
 
 tsl=$(date +%s%N) && "$@" && te=$(date +%s%N) && tt=$(((${te} - ${tsl} - ${overhead})))
 
-echo "argv= $@\n elapsed= ${tt}\n finished shell-command: ${old}" &>> ${OUTPUTFILE}
+echo "argv= $@" &>> ${OUTPUTFILE}
+echo "elapsed= ${tt}" &>> ${OUTPUTFILE}
+echo "finished shell-command: ${old}" &>> ${OUTPUTFILE}

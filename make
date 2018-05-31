@@ -13,4 +13,6 @@ tsl=$(date +%s%N)
 
 tt=$((($(date +%s%N) - ${tsl} - ${overhead})))
 
-echo "topmake-argv= $@\n elapsed= ${tt}\n finishing top-make: $@ ; in directory $cdir" &>> ${OUTPUTFILE}
+echo "topmake-argv= $@" &>> ${OUTPUTFILE}
+echo "elapsed= ${tt}" &>> ${OUTPUTFILE}
+echo "finishing top-make: $@ ; in directory $cdir" &>> ${OUTPUTFILE}
