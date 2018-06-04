@@ -96,63 +96,77 @@ int main(int argc, char **argv) {
   
   r1 = clock_gettime(CLOCK_REALTIME, start);
 
-  char *command = argv[1];
   
-  int i;
-  for(i = 2; i < argc; i ++) {
-    strcat(command, " ");
-    strcat(command, argv[i]);
-  }
-  
-  fprintf(out, "Command is %s\n", command);
-  
-  if (fclose(out) == EOF) {
-    exit(EXIT_FAILURE);
-  }
-  
-  int status = system(command);
-  if (status == -1) {
-    exit(EXIT_FAILURE);
-  }
 
-  // todo check status
-  r2 = clock_gettime(CLOCK_REALTIME, end);
-  
-  if (-1 == r1 || -1 == r2) {
+  int mpid = fork();
+  if (mpid == 0) {
+    int argnum = (argc - 2) + 1;
+    char** args = malloc(sizeof(char*)*argnum);
+    args[0] = "-c";
+    int j = 1;
+    int i;
+    for(i = 3; i < argc; i ++) {
+      args[j] = malloc(sizeof(char)*(3 + strlen(argv[i])));
+      sprintf(args[j], "\"%s\"", argv[i]);
+      fprintf(out, "arg is %s\n", args[j]);
+      j = j + 1;
+    }
+    args[j] = 0;
+
+    if (fclose(out) == EOF) {
+      exit(EXIT_FAILURE);
+    }
+
+    execvp(argv[1], args);
+
+    perror("Execv failed");
+  } else if (mpid == -1) {
+    printf("fork failed\n");
     exit(EXIT_FAILURE);
-  }
-  
-  
-  struct timespec *tmptt = malloc(sizeof(struct timespec));
-  struct timespec *tt = malloc(sizeof(struct timespec));
-  
-  if (1 == timespec_subtract(tmptt, end, start)) {
-    printf("Negative time\n");
-    exit(EXIT_FAILURE);
-  }
-  
-  timespec_subtract(tt, tmptt, overhead);
-  
-  tmp = fopen(outputfile, "a");
-  if (tmp == NULL) {
-    exit(EXIT_FAILURE);
-  }
-  
-  fprintf(tmp, "argv=");
-  
-  for(a = 0; a < argc; a ++) {
-    fprintf(tmp, " %s ", argv[a]);
-  }
-  
-  fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
-  
-  free(start);
-  free(end);
-  free(tmptt);
-  free(tt);
-  free(overhead);
-  
-  if (fclose(tmp) == EOF) {
-    exit(EXIT_FAILURE);
+  } else {
+    int status;
+    pid_t pid = wait(&status);
+
+    
+    // todo check status
+    r2 = clock_gettime(CLOCK_REALTIME, end);
+    
+    if (-1 == r1 || -1 == r2) {
+      exit(EXIT_FAILURE);
+    }
+    
+    
+    struct timespec *tmptt = malloc(sizeof(struct timespec));
+    struct timespec *tt = malloc(sizeof(struct timespec));
+    
+    if (1 == timespec_subtract(tmptt, end, start)) {
+      printf("Negative time\n");
+      exit(EXIT_FAILURE);
+    }
+    
+    timespec_subtract(tt, tmptt, overhead);
+    
+    tmp = fopen(outputfile, "a");
+    if (tmp == NULL) {
+      exit(EXIT_FAILURE);
+    }
+    
+    fprintf(tmp, "argv=");
+    
+    for(a = 0; a < argc; a ++) {
+      fprintf(tmp, " %s ", argv[a]);
+    }
+    
+    fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
+    
+    free(start);
+    free(end);
+    free(tmptt);
+    free(tt);
+    free(overhead);
+    
+    if (fclose(tmp) == EOF) {
+      exit(EXIT_FAILURE);
+    }
   }
 }
