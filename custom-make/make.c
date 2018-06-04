@@ -29,6 +29,21 @@ int main(int argc, char** argv) {
   struct timespec *ov1 = malloc(sizeof(struct timespec));
   struct timespec *ov2 = malloc(sizeof(struct timespec));
   struct timespec *overhead = malloc(sizeof(struct timespec));
+
+  
+  if (ov1 == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (ov2 == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (overhead == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
   int r1 = clock_gettime(CLOCK_REALTIME, ov1);
 
   int r2 = clock_gettime(CLOCK_REALTIME, ov2);
@@ -45,11 +60,13 @@ int main(int argc, char** argv) {
   free(ov2);
 
   // write first line to file
+  
   FILE *tmp = fopen(outputfile, "a");
   
   if (tmp == NULL) {
+    perror("fopen");
     exit(EXIT_FAILURE);
-  }
+  } 
   
   fprintf(tmp, "executing top-make: ");
   int a;
@@ -59,33 +76,65 @@ int main(int argc, char** argv) {
   
   fprintf(tmp, "; in directory %s\n", cdir);
 
-  fflush(tmp);
-
+  if (fflush(tmp) == EOF) {
+    perror("fflush");
+    exit(EXIT_FAILURE);
+  }
+  
   if (fclose(tmp) == EOF) {
+    perror("fclose");
     exit(EXIT_FAILURE);
   }
 
   // time make
   struct timespec *start = malloc(sizeof(struct timespec));
   struct timespec *end = malloc(sizeof(struct timespec));
+
+  
+  if (start == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (end == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
   r1 = clock_gettime(CLOCK_REALTIME, start);
 
   // set up output redirection
+
+  
+  /*
   int fd = open(outputfile, O_APPEND || O_CREAT);
   if (-1 == fd) {
     perror("open");
     exit(EXIT_FAILURE);
   }
   
-  dup2(fd, STDOUT_FILENO);
-  dup2(fd, STDERR_FILENO);
-  close(fd);
+  if (-1 == dup2(fd, STDOUT_FILENO)) {
+    perror("dup2");
+    exit(EXIT_FAILURE);
+  }
+  if (-1 == dup2(fd, STDERR_FILENO)) {
+    perror("dup2");
+    exit(EXIT_FAILURE);
+  }
+  if (-1 == close(fd)) {
+    perror("close");
+    exit(EXIT_FAILURE);
+    } */
 
   // run real make
   int mpid = fork();
   if (mpid == 0) {
     int argnum = argc + 6;
     char** args = malloc(sizeof(char*)*argnum);
+    if (args == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+
     args[0] = argv[0];
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
@@ -111,6 +160,19 @@ int main(int argc, char** argv) {
     int status;
     pid_t pid = wait(&status);
 
+    if(pid == -1) {
+      perror("wait");
+      exit(EXIT_FAILURE);
+    }
+
+    // check exit status of child
+    if (WIFSIGNALED(status)) {
+      printf("child terminated by signal\n");
+      exit(EXIT_FAILURE);
+    }
+
+
+
     // todo check status
     r2 = clock_gettime(CLOCK_REALTIME, end);
     
@@ -121,6 +183,16 @@ int main(int argc, char** argv) {
     struct timespec *tmptt = malloc(sizeof(struct timespec));
     struct timespec *tt = malloc(sizeof(struct timespec));
     
+    
+    if (tmptt == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+    if (tt == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+
     if (1 == timespec_subtract(tmptt, end, start)) {
       fprintf(stderr, "Negative time\n");
       exit(EXIT_FAILURE);
@@ -146,20 +218,26 @@ int main(int argc, char** argv) {
 
     fprintf(tmp, "; in directory %s\n", cdir);
 
-    fflush(tmp);
-    
-    
-
-    free(start);
-    free(end);
-    free(tmptt);
-    free(tt);
-    free(overhead);
-    
-    if (fclose(tmp) == EOF) {
-      perror("fclose");
+    if (-1 == fflush(tmp)) {
+      perror("fflush");
       exit(EXIT_FAILURE);
     }
 
+    
+    /*   if (fclose(tmp) == EOF) {
+      perror("fclose");
+      exit(EXIT_FAILURE);
+      } */
+        
+    free(start);
+    printf("here\n");
+    free(end);
+    printf("here 2\n");
+    free(tmptt);
+    printf("here 3\n");
+    free(tt);
+    printf("here 4\n");
+    free(overhead);
+    printf("here 5\n");
   }
 }
