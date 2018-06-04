@@ -115,7 +115,8 @@ int main(int argc, char **argv) {
 
     execv("/bin/bash", args);
 
-    perror("Execv failed");
+    perror("execv");
+    exit(EXIT_FAILURE);
   } else if (mpid == -1) {
     printf("fork failed\n");
     exit(EXIT_FAILURE);

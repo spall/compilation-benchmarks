@@ -82,14 +82,16 @@ int main(int argc, char** argv) {
   // run real make
   int mpid = fork();
   if (mpid == 0) {
-    int argnum = (argc - 1) + 6;
+    int argnum = argc + 6;
     char** args = malloc(sizeof(char*)*argnum);
-    args[0] = "--debug=v";
-    args[1] = "MAKE=submake";
-    args[2] = "SHELL=rusage /bin/bash";
-    args[3] = "-j";
-    args[4] = makej;
-    int j = 5;
+    args[0] = argv[0];
+    args[1] = "--debug=v";
+    args[2] = "MAKE=submake";
+    args[3] = "SHELL=rusage /bin/bash";
+    args[4] = "-j";
+    args[5] = makej;
+
+    int j = 6;
     int i;
     for(i = 1; i < argc; i ++) {
       args[j] = argv[i];

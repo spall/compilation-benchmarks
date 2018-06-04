@@ -70,12 +70,13 @@ int main(int argc, char **argv) {
   // run real make
   int mpid = fork();
   if (mpid == 0) {
-    int argnum = (argc - 1) + 4;
+    int argnum = argc + 4;
     const char** args = malloc(sizeof(char*)*argnum);
-    args[0] = "--debug=v";
-    args[1] = "MAKE=submake";
-    args[2] = "SHELL=rusage /bin/bash";
-    int j = 3;
+    args[0] = argv[0];
+    args[1] = "--debug=v";
+    args[2] = "MAKE=submake";
+    args[3] = "SHELL=rusage /bin/bash";
+    int j = 4;
     int i;
     for(i = 1; i < argc; i ++) {
       args[j] = argv[i];
@@ -84,9 +85,10 @@ int main(int argc, char **argv) {
     args[j] = 0;
  
     execv("/usr/bin/make", args);
-    perror("Execv failed");
+    perror("execv");
+    exit(EXIT_FAILURE);
   } else if (mpid == -1) {
-    printf("fork failed\n");
+    perror("fork");
     exit(EXIT_FAILURE);
   } else {
     int status;
