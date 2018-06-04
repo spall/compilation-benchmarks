@@ -7,7 +7,7 @@
 int main(int argc, char **argv) {
 
   if (argc < 2) {
-    printf("Error: not enough arguments to rusage\n");
+    fprintf(stderr, "Error: not enough arguments to rusage\n");
     exit(EXIT_FAILURE);
   }
 
@@ -17,17 +17,18 @@ int main(int argc, char **argv) {
   
   
   if(scnum == NULL) {
-    printf("Error: SCNUM environment variable not set\n");
+    fprintf(stderr, "Error: SCNUM environment variable not set\n");
     exit(EXIT_FAILURE);
   }
   
   if (outputfile == NULL) {
-    printf("Error: OUTPUTFILE environment variable not set\n");
+    fprintf(stderr, "Error: OUTPUTFILE environment variable not set\n");
     exit(EXIT_FAILURE);
   }
 
   FILE *tmp = fopen(scnum, "r");
   if(tmp == NULL) {
+    perror("fopen");
     exit(EXIT_FAILURE);
   }
 
@@ -40,11 +41,13 @@ int main(int argc, char **argv) {
   }
 
   if (fclose(tmp) == EOF) {
+    perror("fclose");
     exit(EXIT_FAILURE);
   }
 
   tmp = fopen(scnum, "w");
   if(tmp == NULL) {
+    perror("fopen");
     exit(EXIT_FAILURE);
   }
   
@@ -53,30 +56,55 @@ int main(int argc, char **argv) {
   // turn line into a number.
   int old = atoi(line);
   fprintf(tmp, "%d\n", old + 1);
-  
+  fflush(tmp);
+
   if (fclose(tmp) == EOF) {
+    perror("fclose");
     exit(EXIT_FAILURE);
   }
+
+  fflush(stderr);
+  fflush(stdout);
   
   FILE *out = fopen(outputfile, "a");
   if (out == NULL) {
+    perror("fopen");
     exit(EXIT_FAILURE);
-  }
+  } 
   
   fprintf(out, "executing shell-command: %d ", old);
+  fflush(out);
   int a;
   for(a = 1; a < argc; a ++) {
     fprintf(out, "%s ", argv[a]);
+    fflush(out);
   }
   fprintf(out, "\n");
 
-  
+  if (fflush(out) == EOF) {
+    perror("fflush");
+    exit(EXIT_FAILURE);
+  }
 
   // estimate timing overhead
   struct timespec *ov1 = malloc(sizeof(struct timespec));
   struct timespec *ov2 = malloc(sizeof(struct timespec));
   struct timespec *overhead = malloc(sizeof(struct timespec));
   
+  if (ov1 == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (ov2 == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (overhead == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
+
   int r1 = clock_gettime(CLOCK_REALTIME, ov1);
   int r2 = clock_gettime(CLOCK_REALTIME, ov2);
   if (-1 == r1 || -1 == r2) {
@@ -84,7 +112,7 @@ int main(int argc, char **argv) {
   }
   
   if (1 == timespec_subtract(overhead, ov2, ov1)) { // ov2 - ov1
-    printf("Negative overhead\n");
+    fprintf(stderr, "Negative overhead\n");
     exit(EXIT_FAILURE);
   }
 
@@ -94,6 +122,15 @@ int main(int argc, char **argv) {
   struct timespec *start = malloc(sizeof(struct timespec));
   struct timespec *end = malloc(sizeof(struct timespec));
   
+  if (start == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+  if (end == NULL) {
+    perror("malloc");
+    exit(EXIT_FAILURE);
+  }
+
   r1 = clock_gettime(CLOCK_REALTIME, start);
 
   
@@ -101,6 +138,11 @@ int main(int argc, char **argv) {
   int mpid = fork();
   if (mpid == 0) {
     char** args = malloc(sizeof(char*)*argc);
+    if (args == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+
     int j = 0;
     int i;
     for(i = 1; i < argc; i ++) {
@@ -109,20 +151,34 @@ int main(int argc, char **argv) {
     }
     args[j] = 0;
 
-    if (fclose(out) == EOF) {
-      exit(EXIT_FAILURE);
-    }
-
     execv("/bin/bash", args);
 
     perror("execv");
     exit(EXIT_FAILURE);
   } else if (mpid == -1) {
-    printf("fork failed\n");
+    perror("fork");
     exit(EXIT_FAILURE);
   } else {
     int status;
     pid_t pid = wait(&status);
+
+    if (pid == -1) {
+      perror("wait");
+      exit(EXIT_FAILURE);
+    }
+    
+    
+    /*
+    if (WIFEXITED(status)) {
+      printf("exited, status=%d\n", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+      } */
+
 
     
     // todo check status
@@ -136,8 +192,17 @@ int main(int argc, char **argv) {
     struct timespec *tmptt = malloc(sizeof(struct timespec));
     struct timespec *tt = malloc(sizeof(struct timespec));
     
+    if (tmptt == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+    if (tt == NULL) {
+      perror("malloc");
+      exit(EXIT_FAILURE);
+    }
+
     if (1 == timespec_subtract(tmptt, end, start)) {
-      printf("Negative time\n");
+      fprintf(stderr, "Negative time\n");
       exit(EXIT_FAILURE);
     }
     
@@ -149,21 +214,26 @@ int main(int argc, char **argv) {
     }
     
     fprintf(tmp, "argv=");
-    
+    fflush(tmp);
+
     for(a = 0; a < argc; a ++) {
       fprintf(tmp, " %s ", argv[a]);
+      fflush(tmp);
     }
     
     fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
     
+    fflush(tmp);
+    
+    if (fclose(tmp) == EOF) {
+      exit(EXIT_FAILURE);
+    }
+
     free(start);
     free(end);
     free(tmptt);
     free(tt);
     free(overhead);
-    
-    if (fclose(tmp) == EOF) {
-      exit(EXIT_FAILURE);
-    }
   }
+  exit(EXIT_SUCCESS);
 }
