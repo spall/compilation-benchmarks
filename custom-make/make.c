@@ -12,16 +12,16 @@ int main(int argc, char** argv) {
   char* makej = getenv("MAKEJ");
   
   if(cdir == NULL) {
-    printf("Error: CDIR environment variable not set\n");
+    fprintf(stderr, "Error: CDIR environment variable not set\n");
     exit(EXIT_FAILURE);
   }
 
   if (outputfile == NULL) {
-    printf("Error: OUTPUTFILE environment variable not set\n");
+    fprintf(stderr, "Error: OUTPUTFILE environment variable not set\n");
     exit(EXIT_FAILURE);
   }
   if (makej == NULL) {
-    printf("Error: MAKEJ environment variable not set\n");
+    fprintf(stderr, "Error: MAKEJ environment variable not set\n");
     exit(EXIT_FAILURE);
   }
   
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
   }
 
   if (1 == timespec_subtract(overhead, ov2, ov1)) { // ov2 - ov1
-    printf("Negative overhead\n");
+    fprintf(stderr, "Negative overhead\n");
     exit(EXIT_FAILURE);
   }
 
@@ -58,6 +58,8 @@ int main(int argc, char** argv) {
   }
   
   fprintf(tmp, "; in directory %s\n", cdir);
+
+  fflush(tmp);
 
   if (fclose(tmp) == EOF) {
     exit(EXIT_FAILURE);
