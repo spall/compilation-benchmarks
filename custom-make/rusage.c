@@ -100,15 +100,11 @@ int main(int argc, char **argv) {
 
   int mpid = fork();
   if (mpid == 0) {
-    int argnum = (argc - 2) + 1;
-    char** args = malloc(sizeof(char*)*argnum);
-    args[0] = "-c";
-    int j = 1;
+    char** args = malloc(sizeof(char*)*argc);
+    int j = 0;
     int i;
-    for(i = 3; i < argc; i ++) {
-      args[j] = malloc(sizeof(char)*(3 + strlen(argv[i])));
-      sprintf(args[j], "\"%s\"", argv[i]);
-      fprintf(out, "arg is %s\n", args[j]);
+    for(i = 1; i < argc; i ++) {
+      args[j] = argv[i];
       j = j + 1;
     }
     args[j] = 0;
@@ -117,7 +113,7 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    execvp(argv[1], args);
+    execv("/bin/bash", args);
 
     perror("Execv failed");
   } else if (mpid == -1) {
