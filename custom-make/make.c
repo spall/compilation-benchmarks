@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
 
     perror("Execv failed");
   } else if (mpid == -1) {
-    printf("fork failed\n");
+    perror("fork");
     exit(EXIT_FAILURE);
   } else {
     int status;
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     struct timespec *tt = malloc(sizeof(struct timespec));
     
     if (1 == timespec_subtract(tmptt, end, start)) {
-      printf("Negative time\n");
+      fprintf(stderr, "Negative time\n");
       exit(EXIT_FAILURE);
     }
     
@@ -146,14 +146,20 @@ int main(int argc, char** argv) {
 
     fprintf(tmp, "; in directory %s\n", cdir);
 
+    fflush(tmp);
+    
+    
+
     free(start);
     free(end);
     free(tmptt);
     free(tt);
     free(overhead);
-
+    
     if (fclose(tmp) == EOF) {
+      perror("fclose");
       exit(EXIT_FAILURE);
     }
+
   }
 }
