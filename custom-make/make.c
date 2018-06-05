@@ -105,14 +105,9 @@ int main(int argc, char** argv) {
   r1 = clock_gettime(CLOCK_REALTIME, start);
 
   // set up output redirection
-
-  // run real make
-  int mpid = fork();
-  if (mpid == 0) {
-
-    int fd = open(outputfile, O_APPEND || O_CREAT);
-  if (-1 == fd) {
-    perror("open");
+  int fd = open(outputfile, O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
+    if (-1 == fd) {
+      perror("open");
     exit(EXIT_FAILURE);
   }
   
@@ -128,6 +123,12 @@ int main(int argc, char** argv) {
     perror("close");
     exit(EXIT_FAILURE);
   }
+
+
+  // run real make
+  int mpid = fork();
+  if (mpid == 0) {
+
 
     int argnum = argc + 6;
     char** args = malloc(sizeof(char*)*argnum);
