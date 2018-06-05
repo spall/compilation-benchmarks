@@ -69,9 +69,11 @@ int main(int argc, char** argv) {
   } 
   
   fprintf(tmp, "executing top-make: ");
+  fflush(tmp);
   int a;
   for(a = 0; a < argc; a ++) {
     fprintf(tmp, "%s ", argv[a]);
+    fflush(tmp);
   }
   
   fprintf(tmp, "; in directory %s\n", cdir);
@@ -104,9 +106,11 @@ int main(int argc, char** argv) {
 
   // set up output redirection
 
-  
-  /*
-  int fd = open(outputfile, O_APPEND || O_CREAT);
+  // run real make
+  int mpid = fork();
+  if (mpid == 0) {
+
+    int fd = open(outputfile, O_APPEND || O_CREAT);
   if (-1 == fd) {
     perror("open");
     exit(EXIT_FAILURE);
@@ -123,11 +127,8 @@ int main(int argc, char** argv) {
   if (-1 == close(fd)) {
     perror("close");
     exit(EXIT_FAILURE);
-    } */
+  }
 
-  // run real make
-  int mpid = fork();
-  if (mpid == 0) {
     int argnum = argc + 6;
     char** args = malloc(sizeof(char*)*argnum);
     if (args == NULL) {
@@ -165,12 +166,16 @@ int main(int argc, char** argv) {
       exit(EXIT_FAILURE);
     }
 
-    // check exit status of child
-    if (WIFSIGNALED(status)) {
-      printf("child terminated by signal\n");
-      exit(EXIT_FAILURE);
-    }
-
+    /*
+    if (WIFEXITED(status)) {
+      printf("exited, status=%d\n", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+      } */
 
 
     // todo check status
@@ -206,14 +211,18 @@ int main(int argc, char** argv) {
     }
 
     fprintf(tmp, "topmake-argv=");
+    fflush(tmp);
     int a;
     for(a = 0; a < argc; a ++) {
       fprintf(tmp, " %s ", argv[a]);
+      fflush(tmp);
     }
     
     fprintf(tmp, "\nelapsed= %lld.%ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
+    fflush(tmp);
     for(a = 0; a < argc; a ++) {
       fprintf(tmp, "%s ", argv[a]);
+      fflush(tmp);
     }
 
     fprintf(tmp, "; in directory %s\n", cdir);
@@ -224,20 +233,16 @@ int main(int argc, char** argv) {
     }
 
     
-    /*   if (fclose(tmp) == EOF) {
+    if (fclose(tmp) == EOF) {
       perror("fclose");
       exit(EXIT_FAILURE);
-      } */
+    }
         
     free(start);
-    printf("here\n");
     free(end);
-    printf("here 2\n");
     free(tmptt);
-    printf("here 3\n");
     free(tt);
-    printf("here 4\n");
     free(overhead);
-    printf("here 5\n");
   }
+  exit(EXIT_SUCCESS);
 }

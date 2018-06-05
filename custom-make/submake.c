@@ -59,30 +59,30 @@ int main(int argc, char **argv) {
 
   // write first line to file
 
-  /*
   FILE *tmp = fopen(outputfile, "a");
   if (tmp == NULL) {
     exit(EXIT_FAILURE);
-    } */
+    }
   
-  fprintf(stderr, "executing sub-make: ");
+  fprintf(tmp, "executing sub-make: ");
+  fflush(tmp);
   int a;
   for(a = 0; a < argc; a ++) {
-    fprintf(stderr, "%s ", argv[a]);
+    fprintf(tmp, "%s ", argv[a]);
+    fflush(tmp);
   }
   
-  fprintf(stderr, "; in directory %s\n", cdir);
+  fprintf(tmp, "; in directory %s\n", cdir);
 
-  if(fflush(stderr) == EOF) {
+  if(fflush(tmp) == EOF) {
     perror("fflush");
     exit(EXIT_FAILURE);
   }
 
-  /*
   if (fclose(tmp) == EOF) {
     perror("fclose");
     exit(EXIT_FAILURE);
-    } */
+  }
   
 
   // time make
@@ -137,12 +137,17 @@ int main(int argc, char **argv) {
       perror("wait");
       exit(EXIT_FAILURE);
     }
-
-        // check exit status of child
-    if (WIFSIGNALED(status)) {
-      printf("submake: child terminated by signal\n");
-      exit(EXIT_FAILURE);
-    }
+    
+    /*    
+    if (WIFEXITED(status)) {
+      printf("exited, status=%d\n", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+      } */
 
 
     // todo check status
@@ -174,40 +179,44 @@ int main(int argc, char **argv) {
     }
 
     timespec_subtract(tt, tmptt, overhead);
-    /*
+  
     FILE *tmp = fopen(outputfile, "a");
     if (tmp == NULL) {
       perror("fopen");
       exit(EXIT_FAILURE);
-      } */
+    }
 
-    fprintf(stderr, "submake-argv=");
+    fprintf(tmp, "submake-argv=");
+    fflush(tmp);
     int a;
     for(a = 0; a < argc; a ++) {
-      fprintf(stderr, " %s ", argv[a]);
+      fprintf(tmp, " %s ", argv[a]);
+      fflush(tmp);
     }
     
-    fprintf(stderr, "\nelapsed= %lld.%ld\n finishing sub-make: %s :", (long long)tt->tv_sec, tt->tv_nsec, curscnum);
+    fprintf(tmp, "\nelapsed= %lld.%ld\n finishing sub-make: %s :", (long long)tt->tv_sec, tt->tv_nsec, curscnum);
+    fflush(tmp);
     for(a = 0; a < argc; a ++) {
-      fprintf(stderr, "%s ", argv[a]);
+      fprintf(tmp, "%s ", argv[a]);
+      fflush(tmp);
     }
 
-    fprintf(stderr, "; in directory %s\n", cdir);
-    /*
+    fprintf(tmp, "; in directory %s\n", cdir);
     if (fflush(tmp) == EOF) {
       perror("fflush");
       exit(EXIT_FAILURE);
-      } */
+      }
+
+    if (fclose(tmp) == EOF) {
+      perror("fclose");
+      exit(EXIT_FAILURE);
+    }
 
     free(start);
     free(end);
     free(tmptt);
     free(tt);
     free(overhead);
-    
-    /*
-    if (fclose(tmp) == EOF) {
-      exit(EXIT_FAILURE);
-      } */
   }
+  exit(EXIT_SUCCESS);
 }

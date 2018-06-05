@@ -62,22 +62,26 @@ int main(int argc, char **argv) {
     perror("fclose");
     exit(EXIT_FAILURE);
   }
+
+  fflush(stderr);
+  fflush(stdout);
   
-  /*
   FILE *out = fopen(outputfile, "a");
   if (out == NULL) {
     perror("fopen");
     exit(EXIT_FAILURE);
-    } */
+  } 
   
-  fprintf(stderr, "executing shell-command: %d ", old);
+  fprintf(out, "executing shell-command: %d ", old);
+  fflush(out);
   int a;
   for(a = 1; a < argc; a ++) {
-    fprintf(stderr, "%s ", argv[a]);
+    fprintf(out, "%s ", argv[a]);
+    fflush(out);
   }
-  fprintf(stderr, "\n");
+  fprintf(out, "\n");
 
-  if (fflush(stderr) == EOF) {
+  if (fflush(out) == EOF) {
     perror("fflush");
     exit(EXIT_FAILURE);
   }
@@ -163,11 +167,17 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
     
-        // check exit status of child
-    if (WIFSIGNALED(status)) {
-      printf("wait: child terminated by signal\n");
-      exit(EXIT_FAILURE);
-    }
+    
+    /*
+    if (WIFEXITED(status)) {
+      printf("exited, status=%d\n", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      printf("killed by signal %d\n", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d\n", WSTOPSIG(status));
+    } else if (WIFCONTINUED(status)) {
+      printf("continued\n");
+      } */
 
 
     
@@ -204,23 +214,26 @@ int main(int argc, char **argv) {
     }
     
     fprintf(tmp, "argv=");
-    
+    fflush(tmp);
+
     for(a = 0; a < argc; a ++) {
       fprintf(tmp, " %s ", argv[a]);
+      fflush(tmp);
     }
     
     fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
     
     fflush(tmp);
+    
+    if (fclose(tmp) == EOF) {
+      exit(EXIT_FAILURE);
+    }
 
     free(start);
     free(end);
     free(tmptt);
     free(tt);
     free(overhead);
-    
-    if (fclose(tmp) == EOF) {
-      exit(EXIT_FAILURE);
-    }
   }
+  exit(EXIT_SUCCESS);
 }
