@@ -1,28 +1,25 @@
 #include <time.h>
 
 
-/* Subtract the ‘struct timespec’ values X and Y,
-   storing the result in RESULT.
-   Return 1 if the difference is negative, otherwise 0. */
-int timespec_subtract (struct timespec *result, struct timespec *x, struct timespec *y) {
-  
-  /* Perform the carry for the later subtraction by updating y. */
+int timespec_subtract(struct timespec *result, struct timespec *x, struct timespec *y)
+{
+
+  time_t sec_add;
+  unsigned long long nsec_add;
   if (x->tv_nsec < y->tv_nsec) {
-    int nsec = (y->tv_nsec - x->tv_nsec) / 100000000 + 1;
-    y->tv_nsec -= 100000000 * nsec;
-    y->tv_sec += nsec;
-  }
-  if (x->tv_nsec - y->tv_nsec > 100000000) {
-    int nsec = (x->tv_nsec - y->tv_nsec) / 100000000;
-    y->tv_nsec += 100000000 * nsec;
-    y->tv_sec -= nsec;
+    sec_add = x->tv_sec - 1; /* steal 1 second */
+    nsec_add = 1000000000 + x->tv_nsec;
+    
+    result->tv_nsec = nsec_add - y->tv_nsec;
+    result->tv_sec = sec_add - y->tv_sec;
+  } else {
+    result->tv_nsec = x->tv_nsec - y->tv_nsec;
+    result->tv_sec = x->tv_sec - y->tv_sec;
   }
 
-  /* Compute the time remaining to wait.
-     tv_nsec is certainly positive. */
-  result->tv_sec = x->tv_sec - y->tv_sec;
-  result->tv_nsec = x->tv_nsec - y->tv_nsec;
-
-  /* Return 1 if result is negative. */
+  if (x->tv_sec == y->tv_sec) {
+    return x->tv_nsec < y->tv_nsec;
+  }
+  
   return x->tv_sec < y->tv_sec;
 }
