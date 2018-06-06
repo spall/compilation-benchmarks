@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include "helper.h"
+#include "custom-time.h"
 
 int main(int argc, char **argv) {
 
@@ -12,26 +14,11 @@ int main(int argc, char **argv) {
   }
 
   // environment variables we use
-  const char* scnum = getenv("SCNUM");
-  const char* outputfile = getenv("OUTPUTFILE");
+  const char* scnum = getenv_ec("SCNUM");
+  const char* outputfile = getenv_ec("OUTPUTFILE");
   
+  FILE *tmp = fopen_ec(scnum, "r");
   
-  if(scnum == NULL) {
-    fprintf(stderr, "Error: SCNUM environment variable not set\n");
-    exit(EXIT_FAILURE);
-  }
-  
-  if (outputfile == NULL) {
-    fprintf(stderr, "Error: OUTPUTFILE environment variable not set\n");
-    exit(EXIT_FAILURE);
-  }
-
-  FILE *tmp = fopen(scnum, "r");
-  if(tmp == NULL) {
-    perror("fopen");
-    exit(EXIT_FAILURE);
-  }
-
   char* line = NULL;
   size_t len = 0;
   ssize_t read = getline(&line, &len, tmp);
@@ -40,16 +27,8 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-  if (fclose(tmp) == EOF) {
-    perror("fclose");
-    exit(EXIT_FAILURE);
-  }
-
-  tmp = fopen(scnum, "w");
-  if(tmp == NULL) {
-    perror("fopen");
-    exit(EXIT_FAILURE);
-  }
+  fclose_ec(tmp);
+  fopen_ec(scnum, "w");
   
   setenv("CURSCNUM", line, 1); // overwrite curretn value
 
@@ -58,81 +37,38 @@ int main(int argc, char **argv) {
   fprintf(tmp, "%d\n", old + 1);
   fflush(tmp);
 
-  if (fclose(tmp) == EOF) {
-    perror("fclose");
-    exit(EXIT_FAILURE);
-  }
-
-  fflush(stderr);
-  fflush(stdout);
+  fclose_ec(tmp);
   
-  FILE *out = fopen(outputfile, "a");
-  if (out == NULL) {
-    perror("fopen");
-    exit(EXIT_FAILURE);
-  } 
+  FILE *out = fopen_ec(outputfile, "a");
   
   fprintf(out, "executing shell-command: %d ", old);
-  fflush(out);
+  
   int a;
   for(a = 1; a < argc; a ++) {
     fprintf(out, "%s ", argv[a]);
-    fflush(out);
   }
   fprintf(out, "\n");
 
-  if (fflush(out) == EOF) {
-    perror("fflush");
-    exit(EXIT_FAILURE);
-  }
+  fflush_ec(out);
 
   // estimate timing overhead
-  struct timespec *ov1 = malloc(sizeof(struct timespec));
-  struct timespec *ov2 = malloc(sizeof(struct timespec));
   struct timespec *overhead = malloc(sizeof(struct timespec));
-  
-  if (ov1 == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
-  if (ov2 == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
   if (overhead == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
   }
 
-
-  int r1 = clock_gettime(CLOCK_REALTIME, ov1);
-  int r2 = clock_gettime(CLOCK_REALTIME, ov2);
-  if (-1 == r1 || -1 == r2) {
-    exit(EXIT_FAILURE);
-  }
+  estimate_timing_overhead(overhead);  
   
-  if (1 == timespec_subtract(overhead, ov2, ov1)) { // ov2 - ov1
-    fprintf(stderr, "Negative overhead\n");
-    exit(EXIT_FAILURE);
-  }
-
-  free(ov1);
-  free(ov2);
-
   struct timespec *start = malloc(sizeof(struct timespec));
   struct timespec *end = malloc(sizeof(struct timespec));
   
-  if (start == NULL) {
+  if (start == NULL || end == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
   }
-  if (end == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
-
-  r1 = clock_gettime(CLOCK_REALTIME, start);
   
+  int r1 = clock_gettime(CLOCK_REALTIME, start);
 
   int mpid = fork();
   if (mpid == 0) {
@@ -162,14 +98,12 @@ int main(int argc, char **argv) {
     pid_t pid = wait(&status);
 
     // todo check status
-    r2 = clock_gettime(CLOCK_REALTIME, end);
+    int r2 = clock_gettime(CLOCK_REALTIME, end);
     
-
     if (pid == -1) {
       perror("wait");
       exit(EXIT_FAILURE);
     }
-    
     
     /*
     if (WIFEXITED(status)) {
@@ -181,64 +115,36 @@ int main(int argc, char **argv) {
     } else if (WIFCONTINUED(status)) {
       printf("continued\n");
       } */
-
-
-    
     
     if (-1 == r1 || -1 == r2) {
       exit(EXIT_FAILURE);
     }
     
-    
-    struct timespec *tmptt = malloc(sizeof(struct timespec));
     struct timespec *tt = malloc(sizeof(struct timespec));
     
-    if (tmptt == NULL) {
-      perror("malloc");
-      exit(EXIT_FAILURE);
-    }
     if (tt == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
     }
-
-          fprintf(stderr, "end is: %lld.%ld\n", (long long)end->tv_sec, end->tv_nsec);
-      fprintf(stderr, "start is: %lld.%ld\n", (long long)start->tv_sec, start->tv_nsec);
-
-
-    if (1 == timespec_subtract(tmptt, end, start)) {
-      fprintf(stderr, "end is: %lld.%ld\n", (long long)end->tv_sec, end->tv_nsec);
-      fprintf(stderr, "start is: %lld.%ld\n", (long long)start->tv_sec, start->tv_nsec);
-      fprintf(stderr, "3 Negative time\n");
-      exit(EXIT_FAILURE);
-    }
     
-    timespec_subtract(tt, tmptt, overhead);
+    timespec_subtract_3(tt, end, start, overhead);
     
-    tmp = fopen(outputfile, "a");
-    if (tmp == NULL) {
-      exit(EXIT_FAILURE);
-    }
+    tmp = fopen_ec(outputfile, "a");
     
     fprintf(tmp, "argv=");
-    fflush(tmp);
-
+    
     for(a = 0; a < argc; a ++) {
       fprintf(tmp, " %s ", argv[a]);
-      fflush(tmp);
     }
     
     fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
     
     fflush(tmp);
     
-    if (fclose(tmp) == EOF) {
-      exit(EXIT_FAILURE);
-    }
+    fclose_ec(tmp);
 
     free(start);
     free(end);
-    free(tmptt);
     free(tt);
     free(overhead);
   }

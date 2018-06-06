@@ -13,32 +13,16 @@ int main(int argc, char** argv) {
   char* makej = getenv_ec("MAKEJ");
   
   // estimate timing overhead
-  struct timespec *ov1 = malloc(sizeof(struct timespec));
-  struct timespec *ov2 = malloc(sizeof(struct timespec));
   struct timespec *overhead = malloc(sizeof(struct timespec));
   
-  if (ov1 == NULL || ov2 == NULL || overhead == NULL) {
+  if (overhead == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
   }
 
-  int r1 = clock_gettime(CLOCK_REALTIME, ov1);
+  estimate_timing_overhead(overhead);
 
-  int r2 = clock_gettime(CLOCK_REALTIME, ov2);
-  if (-1 == r1 || -1 == r2) {
-    exit(EXIT_FAILURE);
-  }
-
-  if (1 == timespec_subtract(overhead, ov2, ov1)) { // ov2 - ov1
-    fprintf(stderr, "Negative overhead\n");
-    exit(EXIT_FAILURE);
-  }
-
-  free(ov1);
-  free(ov2);
-
-  // write first line to file
-  
+  // write first line to file  
   FILE *out = fopen_ec(outputfile, "a");
   
   fprintf(out, "executing top-make: ");
@@ -62,7 +46,7 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
-  r1 = clock_gettime(CLOCK_REALTIME, start);
+  int r1 = clock_gettime(CLOCK_REALTIME, start);
 
   // set up output redirection
   int fd = open(outputfile, O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
@@ -118,6 +102,8 @@ int main(int argc, char** argv) {
     int status;
     pid_t pid = wait(&status);
 
+    int r2 = clock_gettime(CLOCK_REALTIME, end);
+
     if(pid == -1) {
       perror("wait");
       exit(EXIT_FAILURE);
@@ -135,26 +121,19 @@ int main(int argc, char** argv) {
       } */
 
     // todo check status
-    r2 = clock_gettime(CLOCK_REALTIME, end);
     
     if (-1 == r1 || -1 == r2) {
       exit(EXIT_FAILURE);
     }
 
-    struct timespec *tmptt = malloc(sizeof(struct timespec));
     struct timespec *tt = malloc(sizeof(struct timespec));
     
-    if (tmptt == NULL || tt == NULL) {
+    if (tt == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
     }
 
-    if (1 == timespec_subtract(tmptt, end, start)) {
-      fprintf(stderr, "1 Negative time\n");
-      exit(EXIT_FAILURE);
-    }
-    
-    timespec_subtract(tt, tmptt, overhead);
+    timespec_subtract_3(tt, end, start, overhead);
 
     FILE *out = fopen_ec(outputfile, "a");
 
@@ -171,14 +150,11 @@ int main(int argc, char** argv) {
     }
 
     fprintf(out, "; in directory %s\n", cdir);
-
-    fflush_ec(out);
-    
+    fflush_ec(out);    
     fclose_ec(out);
         
     free(start);
     free(end);
-    free(tmptt);
     free(tt);
     free(overhead);
   }
