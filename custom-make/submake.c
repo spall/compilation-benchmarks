@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
 
 
     if (1 == timespec_subtract(tmptt, end, start)) {
-      fprintf(stderr, "Negative time\n");
+      fprintf(stderr, "2 Negative time\n");
       exit(EXIT_FAILURE);
     }
 

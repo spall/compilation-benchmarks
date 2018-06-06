@@ -3,43 +3,21 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include "helper.h"
 
 int main(int argc, char** argv) {
 
   // environment variables we use
-  const char* cdir = getenv("PWD");
-  const char* outputfile = getenv("OUTPUTFILE");
-  char* makej = getenv("MAKEJ");
-  
-  if(cdir == NULL) {
-    fprintf(stderr, "Error: CDIR environment variable not set\n");
-    exit(EXIT_FAILURE);
-  }
-
-  if (outputfile == NULL) {
-    fprintf(stderr, "Error: OUTPUTFILE environment variable not set\n");
-    exit(EXIT_FAILURE);
-  }
-  if (makej == NULL) {
-    fprintf(stderr, "Error: MAKEJ environment variable not set\n");
-    exit(EXIT_FAILURE);
-  }
+  char* cdir = getenv_ec("PWD");
+  char* outputfile = getenv_ec("OUTPUTFILE");
+  char* makej = getenv_ec("MAKEJ");
   
   // estimate timing overhead
   struct timespec *ov1 = malloc(sizeof(struct timespec));
   struct timespec *ov2 = malloc(sizeof(struct timespec));
   struct timespec *overhead = malloc(sizeof(struct timespec));
-
   
-  if (ov1 == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
-  if (ov2 == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
-  if (overhead == NULL) {
+  if (ov1 == NULL || ov2 == NULL || overhead == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
   }
@@ -61,43 +39,25 @@ int main(int argc, char** argv) {
 
   // write first line to file
   
-  FILE *tmp = fopen(outputfile, "a");
+  FILE *out = fopen_ec(outputfile, "a");
   
-  if (tmp == NULL) {
-    perror("fopen");
-    exit(EXIT_FAILURE);
-  } 
-  
-  fprintf(tmp, "executing top-make: ");
-  fflush(tmp);
+  fprintf(out, "executing top-make: ");
+
   int a;
   for(a = 0; a < argc; a ++) {
-    fprintf(tmp, "%s ", argv[a]);
-    fflush(tmp);
+    fprintf(out, "%s ", argv[a]);
   }
   
-  fprintf(tmp, "; in directory %s\n", cdir);
+  fprintf(out, "; in directory %s\n", cdir);
 
-  if (fflush(tmp) == EOF) {
-    perror("fflush");
-    exit(EXIT_FAILURE);
-  }
-  
-  if (fclose(tmp) == EOF) {
-    perror("fclose");
-    exit(EXIT_FAILURE);
-  }
+  fflush_ec(out);
+  fclose_ec(out);
 
   // time make
   struct timespec *start = malloc(sizeof(struct timespec));
   struct timespec *end = malloc(sizeof(struct timespec));
-
   
-  if (start == NULL) {
-    perror("malloc");
-    exit(EXIT_FAILURE);
-  }
-  if (end == NULL) {
+  if (start == NULL || end == NULL) {
     perror("malloc");
     exit(EXIT_FAILURE);
   }
@@ -106,8 +66,8 @@ int main(int argc, char** argv) {
 
   // set up output redirection
   int fd = open(outputfile, O_WRONLY | O_APPEND | O_CREAT, S_IRWXU);
-    if (-1 == fd) {
-      perror("open");
+  if (-1 == fd) {
+    perror("open");
     exit(EXIT_FAILURE);
   }
   
@@ -124,14 +84,10 @@ int main(int argc, char** argv) {
     exit(EXIT_FAILURE);
   }
 
-
   // run real make
   int mpid = fork();
   if (mpid == 0) {
-
-
-    int argnum = argc + 6;
-    char** args = malloc(sizeof(char*)*argnum);
+    char** args = malloc(sizeof(char*)*(argc+6));
     if (args == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
@@ -154,7 +110,7 @@ int main(int argc, char** argv) {
 
     execv("/usr/bin/make", args);
 
-    perror("Execv failed");
+    perror("execv");
   } else if (mpid == -1) {
     perror("fork");
     exit(EXIT_FAILURE);
@@ -178,7 +134,6 @@ int main(int argc, char** argv) {
       printf("continued\n");
       } */
 
-
     // todo check status
     r2 = clock_gettime(CLOCK_REALTIME, end);
     
@@ -189,55 +144,37 @@ int main(int argc, char** argv) {
     struct timespec *tmptt = malloc(sizeof(struct timespec));
     struct timespec *tt = malloc(sizeof(struct timespec));
     
-    
-    if (tmptt == NULL) {
-      perror("malloc");
-      exit(EXIT_FAILURE);
-    }
-    if (tt == NULL) {
+    if (tmptt == NULL || tt == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
     }
 
     if (1 == timespec_subtract(tmptt, end, start)) {
-      fprintf(stderr, "Negative time\n");
+      fprintf(stderr, "1 Negative time\n");
       exit(EXIT_FAILURE);
     }
     
     timespec_subtract(tt, tmptt, overhead);
 
-    FILE *tmp = fopen(outputfile, "a");
-    if (tmp == NULL) {
-      exit(EXIT_FAILURE);
-    }
+    FILE *out = fopen_ec(outputfile, "a");
 
-    fprintf(tmp, "topmake-argv=");
-    fflush(tmp);
+    fprintf(out, "topmake-argv=");
     int a;
     for(a = 0; a < argc; a ++) {
-      fprintf(tmp, " %s ", argv[a]);
-      fflush(tmp);
+      fprintf(out, " %s ", argv[a]);
     }
     
-    fprintf(tmp, "\nelapsed= %lld.%ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
-    fflush(tmp);
+    fprintf(out, "\nelapsed= %lld.%ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
+
     for(a = 0; a < argc; a ++) {
-      fprintf(tmp, "%s ", argv[a]);
-      fflush(tmp);
+      fprintf(out, "%s ", argv[a]);
     }
 
-    fprintf(tmp, "; in directory %s\n", cdir);
+    fprintf(out, "; in directory %s\n", cdir);
 
-    if (-1 == fflush(tmp)) {
-      perror("fflush");
-      exit(EXIT_FAILURE);
-    }
-
+    fflush_ec(out);
     
-    if (fclose(tmp) == EOF) {
-      perror("fclose");
-      exit(EXIT_FAILURE);
-    }
+    fclose_ec(out);
         
     free(start);
     free(end);
