@@ -132,7 +132,6 @@ int main(int argc, char **argv) {
   }
 
   r1 = clock_gettime(CLOCK_REALTIME, start);
-
   
 
   int mpid = fork();
@@ -162,6 +161,10 @@ int main(int argc, char **argv) {
     int status;
     pid_t pid = wait(&status);
 
+    // todo check status
+    r2 = clock_gettime(CLOCK_REALTIME, end);
+    
+
     if (pid == -1) {
       perror("wait");
       exit(EXIT_FAILURE);
@@ -181,8 +184,6 @@ int main(int argc, char **argv) {
 
 
     
-    // todo check status
-    r2 = clock_gettime(CLOCK_REALTIME, end);
     
     if (-1 == r1 || -1 == r2) {
       exit(EXIT_FAILURE);
@@ -201,8 +202,14 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
+          fprintf(stderr, "end is: %lld.%ld\n", (long long)end->tv_sec, end->tv_nsec);
+      fprintf(stderr, "start is: %lld.%ld\n", (long long)start->tv_sec, start->tv_nsec);
+
+
     if (1 == timespec_subtract(tmptt, end, start)) {
-      fprintf(stderr, "Negative time\n");
+      fprintf(stderr, "end is: %lld.%ld\n", (long long)end->tv_sec, end->tv_nsec);
+      fprintf(stderr, "start is: %lld.%ld\n", (long long)start->tv_sec, start->tv_nsec);
+      fprintf(stderr, "3 Negative time\n");
       exit(EXIT_FAILURE);
     }
     
