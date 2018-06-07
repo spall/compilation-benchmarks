@@ -137,13 +137,13 @@ int main(int argc, char** argv) {
 
     FILE *out = fopen_ec(outputfile, "a");
 
-    fprintf(out, "topmake-argv=");
+    fprintf(out, "topmake-argv= ");
     int a;
     for(a = 0; a < argc; a ++) {
-      fprintf(out, " %s ", argv[a]);
+      fprintf(out, "%s ", argv[a]);
     }
     
-    fprintf(out, "\nelapsed= %lld.%ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
+    fprintf(out, "\nelapsed= %lld.%.9ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
 
     for(a = 0; a < argc; a ++) {
       fprintf(out, "%s ", argv[a]);

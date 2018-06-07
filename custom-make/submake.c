@@ -11,6 +11,8 @@ int main(int argc, char **argv) {
   const char* outputfile = getenv_ec("OUTPUTFILE");
   const char* curscnum = getenv_ec("CURSCNUM");
 
+  int old = atoi(curscnum);
+  
   // estimate timing overhead
   struct timespec *overhead = malloc(sizeof(struct timespec));
 
@@ -25,10 +27,12 @@ int main(int argc, char **argv) {
 
   FILE *tmp = fopen_ec(outputfile, "a");
   
-  fprintf(tmp, "executing sub-make: ");
+  fprintf(tmp, "executing sub-make: %d : ", old);
+  fflush(tmp);
   int a;
-  for(a = 0; a < argc; a ++) {
+  for(a = 1; a < argc; a ++) {
     fprintf(tmp, "%s ", argv[a]);
+    fflush(tmp);
   }
   
   fprintf(tmp, "; in directory %s\n", cdir);
@@ -57,7 +61,7 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    args[0] = argv[0];
+    args[0] = "foo";
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
     args[3] = "SHELL=rusage /bin/bash";
@@ -80,6 +84,8 @@ int main(int argc, char **argv) {
     pid_t pid = wait(&status);
     
     int r2 = clock_gettime(CLOCK_REALTIME, end);
+
+    
 
     if (pid == -1) {
       perror("wait");
@@ -110,24 +116,26 @@ int main(int argc, char **argv) {
     }
 
     timespec_subtract_3(tt, end, start, overhead);
-  
-    FILE *tmp = fopen_ec(outputfile, "a");
-    
 
-    fprintf(tmp, "submake-argv=");
+    tmp = fopen_ec(outputfile, "a");
+
+    fprintf(tmp, "submake-argv= ");
+
     int a;
     for(a = 0; a < argc; a ++) {
-      fprintf(tmp, " %s ", argv[a]);
+      fprintf(tmp, "%s ", argv[a]);
     }
+    fprintf(tmp, "\n");
     
-    fprintf(tmp, "\nelapsed= %lld.%ld\n finishing sub-make: %s :", (long long)tt->tv_sec, tt->tv_nsec, curscnum);
-    for(a = 0; a < argc; a ++) {
+    fprintf(tmp, "elapsed= %lld.%.9ld\n finishing sub-make: %d : ", (long long)tt->tv_sec, tt->tv_nsec, old);
+
+    for(a = 1; a < argc; a ++) {
       fprintf(tmp, "%s ", argv[a]);
     }
 
     fprintf(tmp, "; in directory %s\n", cdir);
 
-    fflush_ec(tmp);
+    fflush(tmp);
     fclose_ec(tmp);
 
     free(start);

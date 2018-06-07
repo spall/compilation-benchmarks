@@ -131,13 +131,13 @@ int main(int argc, char **argv) {
     
     tmp = fopen_ec(outputfile, "a");
     
-    fprintf(tmp, "argv=");
+    fprintf(tmp, "argv= ");
     
     for(a = 0; a < argc; a ++) {
-      fprintf(tmp, " %s ", argv[a]);
+      fprintf(tmp, "%s ", argv[a]);
     }
     
-    fprintf(tmp, "\nelapsed= %lld.%ld\n finishing shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
+    fprintf(tmp, "\nelapsed= %lld.%.9ld\n finished shell-command: %d\n", (long long)tt->tv_sec, tt->tv_nsec, old);
     
     fflush(tmp);
     
