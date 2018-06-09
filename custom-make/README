@@ -1,0 +1,4 @@
+To use this modified version of make:
+
+1. build this project using make
+2. Add this directory to beginning of PATH
