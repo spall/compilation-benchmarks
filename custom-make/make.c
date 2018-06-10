@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     args[0] = argv[0];
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
-    args[3] = "SHELL=rusage /bin/bash";
+    args[3] = "SHELL=dash";
     args[4] = "-j";
     args[5] = makej;
 

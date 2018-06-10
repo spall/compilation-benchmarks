@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
   const char* cdir = getenv_ec("PWD");
   const char* outputfile = getenv_ec("OUTPUTFILE");
   const char* curscnum = getenv_ec("CURSCNUM");
-
+  
   int old = atoi(curscnum);
   
   // estimate timing overhead
@@ -59,10 +59,10 @@ int main(int argc, char **argv) {
       exit(EXIT_FAILURE);
     }
 
-    args[0] = "foo";
+    args[0] = argv[0];
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
-    args[3] = "SHELL=rusage /bin/bash";
+    args[3] = "SHELL=dash";
     int j = 4;
     int i;
     for(i = 1; i < argc; i ++) {
