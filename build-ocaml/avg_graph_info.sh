@@ -7,22 +7,23 @@ count=$3
 makepath=$4
 tarpath=$5
 
-MAX=32 # number of cores we have access to on hive
+MAX=1 # number of cores we have access to on hive
 
 # 1. add custom make script to front of path
+path=$(pwd)
 
 oldpath=$PATH # save old path so we can restore when we are done
-export PATH="/data/beehive/home.local/sjspall/compilation-benchmarks:$PATH" 
+export PATH="~/bin:$path/../custom-make:$PATH" 
 # 2. set MAKEJ = 1
 export MAKEJ="1"
 
-path=$(pwd)
+
 tstamp=$(date +%s)
 
 outdir="${path}/../../ocaml-results/rusage-out/${tstamp}"
 
 # 4. set up counter for shell commands
-export SCNUM="/data/beehive/home.local/sjspall/compilation-benchmarks/scnum"
+export SCNUM="$path/../scnum"
 echo 1 > $SCNUM # write 1 to file
 
 # create results directories if they don't exist
@@ -65,7 +66,7 @@ do
 	
 	./configure --prefix ${installprefix}
 
-	taskset -ac $core make world && taskset -ac $core make install
+	make world && make install
 
 	echo "make done"
 

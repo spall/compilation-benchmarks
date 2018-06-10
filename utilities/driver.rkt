@@ -71,6 +71,7 @@
                ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
          (let ([work_ (work (makegraph-root graph) graph)])
+	 (printf "~a\n" work_)
            (values (+ sum work_)
                    (append (for/list ([tc (in-range 1 33)])
                              (list tc (predicted-speed-upper graph tc work_)
