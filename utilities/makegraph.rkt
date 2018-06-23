@@ -53,7 +53,7 @@
     (write-string "\n" port))
   (write-string "Recipes:\n" port)
   (for ([r (target-recipes t)])
-    (recur t port)
+    (recur r port)
     (write-string "\n" port))
   (when mode (write-string ">" port)))
 
@@ -105,8 +105,6 @@
      (cons (car ls)
            (insert-edge e (cdr ls)))]))
 
-
-
 (define (remove-edge t e)
   (define (helper ls)
     (cond
@@ -115,13 +113,16 @@
       [(equal? e (car ls))
        (cdr ls)]
       [else
-       (cons (car ls) (helper e (cdr ls)))]))
+       (cons (car ls) (helper (cdr ls)))]))
   
   (if (equal? 'dep (edge-type e))
       (set-target-deps! t (helper (target-deps t)))
       (set-target-recipes! t (helper (target-recipes t)))))
 
-(define (add-edge t e)
+(define (add-edge t e [t2 #f])
+  (when t2
+    (set-edge-type! e t2))
+
   (if (equal? 'dep (edge-type e))
       (set-target-deps! t (insert-edge e (target-deps t)))
       (set-target-recipes! t (insert-edge e (target-recipes t)))))

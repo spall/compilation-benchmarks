@@ -395,7 +395,7 @@
                     ;; for i ...... make i
                     ;; - just have a make for each call....
                     ;; not clear this will ever happen, but
-                    (printf "Processing shell command with submakes that is not a duplicate ~a; ~a\n" n_ (string-join rest " "))
+                    ;(printf "Processing shell command with submakes that is not a duplicate ~a; ~a\n" n_ (string-join rest " "))
 
                     (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls))))
                     ;; add edges to fake target.
@@ -409,8 +409,8 @@
                     (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-                      (add-edge tmp-FAKE last-edge)
-                      (remove-edge t last-edge))
+		      (remove-edge t last-edge)
+                      (add-edge tmp-FAKE last-edge 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
@@ -479,8 +479,8 @@
                     (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-                      (add-edge tmp-FAKE last-edge)
-                      (remove-edge t last-edge))
+		      (remove-edge t last-edge)
+                      (add-edge tmp-FAKE last-edge 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
