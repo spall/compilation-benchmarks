@@ -1,3 +1,0 @@
-[submodule "custom-make/dash"]
-	path = custom-make/dash
-	url = https://github.com/spall/dash.git
