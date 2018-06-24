@@ -64,37 +64,29 @@
    (unless (directory-exists? dir-path)
      (error 'driver "~a is not a directory path" dir-path))
    
-   (define-values (sum predictions len)
-     (for/fold ([sum 0]
-                [preds '()]
-                [len 0])
-               ([ru-file (in-directory dir-path)])
+   ;; calculate work and sum them
+   (define-values (wsum ssum len)
+     (for/fold ([wsum 0]
+     	        [ssum 0]
+     	        [len 0])
+	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
-         (let ([work_ (work (makegraph-root graph) graph)])
-           (values (+ sum work_)
-                   (append (for/list ([tc (in-range 1 33)])
-                             (list tc (predicted-speed-upper graph tc work_)
-                                   (predicted-speed-lower graph tc work_)))
-                           preds)
-                   (+ 1 len))))))
-   
+         (let ([work_ (work (makegraph-root graph) graph)]
+	       [span_ (span (makegraph-root graph) graph)])
+	 (printf "~a\n" work_)
+	 (values (+ wsum work_) (+ ssum span_) (+ 1 len))))))
+           
    ;; average predictions
+   (define avg-work (/ wsum len))
+   (define avg-span (/ ssum len))
+   (printf "pcount, upper, lower, perfect\n")
    (for ([tc (in-range 1 33)])
-     (let ([upred (exact->inexact
-                   (/ (apply +
-                             (map cadr (filter (lambda (p)
-                                                 (equal? tc (car p)))
-                                               predictions)))
-                      len))]
-           [lpred (exact->inexact
-                   (/ (apply + (map caddr (filter (lambda (p)
-                                                    (equal? tc (car p)))
-                                                  predictions)))
-                      len))])
-       ;; TODO: write result to file
-       (printf "~a, ~a, ~a\n" tc upred lpred)))
+     (let ([upred (predicted-speed-upper #f tc avg-work avg-span)]
+     	   [lpred (predicted-speed-lower #f tc avg-work avg-span)]
+	   [plspeed (predicted-speed-perfect-linear #f tc avg-work)])
+       (printf "~a, ~a, ~a, ~a\n" tc upred lpred plspeed)))
    
-   (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ sum len)))]
+   (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ wsum len)))]
    
   [else
    (define graph

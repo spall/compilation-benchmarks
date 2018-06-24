@@ -15,6 +15,7 @@
          parallel-slackness
          predicted-speed-upper
          predicted-speed-lower
+	 predicted-speed-perfect-linear
          verify-edge-times
          verify-edges
          
@@ -45,56 +46,45 @@
         (cons val tgs)
         tgs)))
 
-;; work(root) = time to run sequentially
 (define (work root_ graph)
   (define visited (make-hash))
   (define (driver root lbound ubound)
-    ;; sum dep paths
-    (define-values (workdeps leid_)
-      (for/fold ([sum 0]
-                 [leid ubound])
-                ([e (reverse (target-deps root))])
+    
+    (define edges (sort (append (target-deps root) (target-recipes root))
+    	    	  	(lambda (e1 e2)
+			  (< (edge-id e1) (edge-id e2)))))
+    
+    (define-values (workdeps workrecipes leid_)
+      (for/fold ([dsum 0]
+    	       	 [wsum 0]
+	         [leid ubound])
+	        ([e (reverse edges)])
         (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (when (hash-ref visited e #f)
-             (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
-           (hash-set! visited e #t)
-           (define tmpwork (+ (sum-times (edge-data e))
-                              (driver (get-target graph (edge-end e))
-                                      (edge-id e)
-                                      leid)))
-           (when DEBUG
+       	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
+          (when (hash-ref visited e #f)
+	    (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
+	  (hash-set! visited e #t)
+
+	  (define tmpwork (+ (sum-times (edge-data e))
+			   (driver (get-target graph (edge-end e))
+			   	   (edge-id e) leid)))
+	(when DEBUG
              (when (> tmpwork 0)
                (printf "For root dep ~a; work is ~a\n" (edge-end e) tmpwork)))
-           
-           (values (+ sum tmpwork)
-                   (edge-id e))]
-          [else
-           (values sum leid)])))
-    
-    (define-values (workchildren __)
-      (for/fold ([sum 0]
-                 [leid leid_])
-                ([e (reverse (target-recipes root))])
-        (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (when (hash-ref visited e #f)
-             (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
-           (hash-set! visited e #t)
-           (define tmpwork (+ (sum-times (edge-data e))
-                              (driver (get-target graph (edge-end e))
-                                      (edge-id e)
-                                      leid)))
-           (when DEBUG
-             (when (> tmpwork 0)
-               (printf "For root recipe ~a: work is ~a\n" (edge-end e) tmpwork)))
-             
-           (values (+ sum tmpwork)
-                   (edge-id e))]
-          [else
-           (values sum (edge-id e))])))
-    
-    (+ workdeps workchildren))
+        
+	(cond
+	 [(equal? 'dep (edge-type e))
+	  (values (+ dsum tmpwork)
+	  	  wsum
+		  (edge-id e))]
+	 [else
+	  (values dsum
+	  	  (+ wsum tmpwork)
+		  (edge-id e))])]
+       [else
+        (values dsum wsum leid)])))
+
+    (+ workdeps workrecipes))
 
   (define w (driver root_ (- (apply min (map edge-id (append (target-deps root_)
                                                              (target-recipes root_))))
@@ -106,12 +96,12 @@
   (for ([t (in-hash-values (makegraph-targets graph))])
     (for ([e (target-deps t)])
       (unless (hash-ref visited e #f)
-        (error 'work "Never visited edge ~a during work calculation!" e)))
+        (error 'work "dep Never visited edge ~a; target is ~a during work calculation!" e t)))
     (for ([e (target-recipes t)])
       (unless (hash-ref visited e #f)
-        (error 'work "Never visited edge ~a during work calculation!" e))))
+        (error 'work "recipe Never visited edge ~a; target is ~a during work calculation!" e t))))
   w)
-
+    
 (define (sum-times ttimes)
   (cond
     [(empty? ttimes)
@@ -129,65 +119,43 @@
      (+ (car ttimes)
         (sum-times (cdr ttimes)))]))
 
-;; Span(root) = longest time down deps path.
-;;              + Sum of the times of the pink paths
+;; Span(root) = longest time down deps path + sum of times of recipes paths
 (define (span root_ graph)
   (define visited (make-hash))
-  (define (driver root lbound ubound) ;; for an edge to be part of current path. must be > lbound and < ubound
-    (define-values (spandeps leid_)
+  (define (driver root lbound ubound)
+
+    (define edges (sort (append (target-deps root) (target-recipes root))
+    	    	  	(lambda (e1 e2)
+			  (< (edge-id e1) (edge-id e2)))))
+
+    (define-values (spandeps workdeps leid_)
       (for/fold ([max_ 0]
-                 [leid ubound])
-                ([e (reverse (target-deps root))])
-        (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (when (hash-ref visited e #f)
+      		 [sum 0]
+		 [leid ubound])
+		([e (reverse edges)])
+	(cond
+	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
+	  (when (hash-ref visited e #f)
              (error 'span "Visited edge ~a a 2nd time!" e))
            (hash-set! visited e #t)
-           (define tmpspan (+ (sum-times (edge-data e))
-                              (driver (get-target graph (edge-end e))
-                                      (edge-id e)
-                                      leid)))
-           (when DEBUG
-             (when (> tmpspan 0)
-               (printf "For root ~a: span is ~a\n" (edge-end e) tmpspan)))
-           
-           (values (max max_ tmpspan)
-                   (edge-id e))]
-          [else
-           
-           (values max_ leid)])))
+	   
+	   (define tmpspan (+ (sum-times (edge-data e))
+	   	   	      (driver (get-target graph (edge-end e))
+			      	      (edge-id e) leid)))
+	
+	   (cond
+	    [(equal? 'dep (edge-type e))
+	     (values (max max_ tmpspan)
+	     	     sum
+		     (edge-id e))]
+	    [else
+	     (values max_
+	     	     (+ sum tmpspan)
+		     (edge-id e))])]
+	 [else
+	  (values max_ sum leid)])))
 
-    (when DEBUG
-      (when (> spandeps 0)
-        (printf "For root <~a,~a>; span of dependencies is ~a\n" (target-name root) (target-mfile root) spandeps)))
-
-    (define-values (spanchildren __)
-      (for/fold ([sum 0]
-                 [leid leid_])
-                ([e (reverse (target-recipes root))])
-        (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (when (hash-ref visited e #f)
-             (error 'span "Visited edge ~a a 2nd time!" e))
-           (hash-set! visited e #t)
-           (define tmpspan (+ (sum-times (edge-data e))
-                              (driver (get-target graph (edge-end e))
-                                      (edge-id e)
-                                      leid)))
-           (when DEBUG
-             (when (> tmpspan 0)
-               (printf "For root ~a: span is ~a\n" (edge-end e) tmpspan)))
-           
-           (values (+ sum tmpspan)
-                   (edge-id e))]
-          [else
-           (values sum (edge-id e))])))
-
-    (when DEBUG
-      (when (> spanchildren 0)
-        (printf "For root <~a,~a>; sum of recipe spans is ~a\n" (target-name root) (target-mfile root) spanchildren)))
-    
-    (+ spandeps spanchildren))
+      (+ spandeps workdeps))
   
   (define s (driver root_ (- (apply min (map edge-id (append (target-deps root_)
                                                              (target-recipes root_))))
@@ -235,6 +203,11 @@
   (if (< speed span_)
       span_
       speed))
+
+(define (predicted-speed-perfect-linear graph pcount [work_ #f])
+  (unless work_
+    (set! work_ (work (makegraph-root graph) graph)))
+  (exact->inexact (/ work_ pcount)))
 
 (define (print-all-targets-and-mfiles graph name)
   (define targets (hash-keys (makegraph-targets graph)))

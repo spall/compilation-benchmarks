@@ -9,8 +9,6 @@ count=$3
 makepath=$4
 tarpath=$5
 
-MAX=32 # number of cores we have access to. go from 0 to 31
-
 path=$(pwd)
 
 tstamp=$(date +%s)
@@ -23,7 +21,7 @@ installprefix="${path}/../prefix"
 
 touch $outfile
 # write first line to file
-echo "core, work (nanoseconds)" >> $outfile
+echo "work (nanoseconds), user (seconds), sys (seconds)" >> $outfile
 
 mkdir -p ${makepath}
 
@@ -36,58 +34,46 @@ rm -rf ${installprefix}
 
 printsfile="${path}/tmp.out"
 
-sum=0
-core=0
-total=0
+iters=0
 
-while [ "$core" -lt "$MAX" ] # need the spaces
+while [ "$iters" -lt "$count" ]
 do
-    iters=0
+    
+    echo "un-taring"
+    tar -xf ${tarpath}
+    
+    cd ${makepath}
+    
+    env TMPDIR="${path}/tmp"
+    
+    echo "running configure and make"
+    
+    ./configure --prefix ${installprefix}
+    ov1=$(date +%s%N) && overhead=$((($(date +%s%N) - ${ov1})))
+    
+    tout=($( time (tsl=$(date +%s%N) && make -j 1 world &>> ${printsfile} && make -j 1 install &>> ${printsfile} && tt=$((($(date +%s%N) - ${tsl} - ${overhead}))) && printf "%d, " $tt >> $outfile) 2>&1))
 
-    while [ "$iters" -lt "$count" ]
-    do
+    ut=${tout[3]} # user time
+    st=${tout[5]} # sys  time
+    
+    echo "make done"
+    
+    # write result to file
+    echo "$ut, $st" >> $outfile
+    
+    # cleaning
+    echo "Cleaning"
+    
+    cd ${makepath}/..
+    
+    rm -rf ${makepath}
+    
+    rm -rf ${path}/tmp
+    rm -rf ${installprefix}
+    
+    iters=$((iters + 1))
 
-	echo "un-taring"
-	tar -xf ${tarpath}
-	
-	cd ${makepath}
-	
-	env TMPDIR="${path}/tmp"
-	
-	echo "running configure and make"
-	
-	./configure --prefix ${installprefix}
-	ov1=$(date +%s%N) && overhead=$((($(date +%s%N) - ${ov1})))
-	
-	tsl=$(date +%s%N) && taskset -ac $core make -j 1 world &>> ${printsfile} && taskset -ac $core make -j 1 install &>> ${printsfile} && tt=$((($(date +%s%N) - ${tsl} - ${overhead})))
-	
-	echo "make done"
-	
-	# write result to file
-	echo "$core, $tt" >> $outfile
-	
-	# cleaning
-	echo "Cleaning"
-	
-	cd ${makepath}/..
-	
-	rm -rf ${makepath}
-	
-	rm -rf ${path}/tmp
-	rm -rf ${installprefix}
-	
-	iters=$((iters + 1))
-	
-	sum=$((sum + tt))
-	total=$((total + 1))
-    done
-
-    echo "Done with core $core"
-    core=$((core + 1))
 done
-
-avg=$((sum / total))
-echo "avg: ${avg}" >> $outfile
 
 rm -f ${path}/tmp.out
 rm -rf ${path}/tmp
