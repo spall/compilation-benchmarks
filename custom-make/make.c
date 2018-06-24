@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
   // run real make
   int mpid = fork();
   if (mpid == 0) {
-    char** args = malloc(sizeof(char*)*(argc+6));
+    char** args = malloc(sizeof(char*)*(argc+5));
     if (args == NULL) {
       perror("malloc");
       exit(EXIT_FAILURE);
@@ -80,11 +80,10 @@ int main(int argc, char** argv) {
     args[0] = argv[0];
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
-    args[3] = "SHELL=dash";
-    args[4] = "-j";
-    args[5] = makej;
+    args[3] = "-j";
+    args[4] = makej;
 
-    int j = 6;
+    int j = 5;
     int i;
     for(i = 1; i < argc; i ++) {
       args[j] = argv[i];
@@ -92,9 +91,9 @@ int main(int argc, char** argv) {
     }
     args[j] = 0;
 
-    execv("/usr/bin/make", args);
+    execvp("make-4.2", args);
 
-    perror("execv");
+    perror("execvp");
   } else if (mpid == -1) {
     perror("fork");
     exit(EXIT_FAILURE);

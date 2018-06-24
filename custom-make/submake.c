@@ -10,7 +10,21 @@ int main(int argc, char **argv) {
   const char* cdir = getenv_ec("PWD");
   const char* outputfile = getenv_ec("OUTPUTFILE");
   const char* curscnum = getenv_ec("CURSCNUM");
-  
+  unsetenv("CURSCNUM");
+
+  /*
+  // remove curscnum from envp
+  int i;
+  int j = 0;
+  for(i = 0; envp[i] != 0; ++i) {
+    if (0 != strncmp(envp[i], "CURSCNUM", 8)) {
+      envp[j] = envp[i];
+      j = j +1;
+    }
+  }
+  envp[j] = 0;
+  */
+ 
   int old = atoi(curscnum);
   
   // estimate timing overhead
@@ -52,7 +66,7 @@ int main(int argc, char **argv) {
   // run real make
   int mpid = fork();
   if (mpid == 0) {
-    int argnum = argc + 4;
+    int argnum = argc + 3;
     const char** args = malloc(sizeof(char*)*argnum);
     if (args == NULL) {
       perror("malloc");
@@ -62,8 +76,7 @@ int main(int argc, char **argv) {
     args[0] = argv[0];
     args[1] = "--debug=v";
     args[2] = "MAKE=submake";
-    args[3] = "SHELL=dash";
-    int j = 4;
+    int j = 3;
     int i;
     for(i = 1; i < argc; i ++) {
       args[j] = argv[i];
@@ -71,8 +84,8 @@ int main(int argc, char **argv) {
     }
     args[j] = 0;
  
-    execv("/usr/bin/make", args);
-    perror("execv");
+    execvp("make-4.2", args);
+    perror("execvp");
     exit(EXIT_FAILURE);
   } else if (mpid == -1) {
     perror("fork");
