@@ -7,16 +7,13 @@ count=$3
 makepath=$4
 tarpath=$5
 
-MAX=1 # number of cores we have access to on hive
-
 # 1. add custom make script to front of path
 path=$(pwd)
 
 oldpath=$PATH # save old path so we can restore when we are done
-export PATH="~/bin:$path/../custom-make:$PATH" 
+export PATH="$path/../custom-make/bin:$PATH" 
 # 2. set MAKEJ = 1
 export MAKEJ="1"
-
 
 tstamp=$(date +%s)
 
@@ -42,45 +39,38 @@ echo "Cleaning"
 rm -rf ${makepath}
 rm -rf ${installprefix}
 
-core=0
+iters=0
 
-while [ "$core" -lt "$MAX" ]
+while [ "$iters" -lt "$count" ]
 do
-    iters=0
+    # 3. set output file
+    outfile="${outdir}/${iters}_${version}_${machine}.debug" #maybe change extension
+    export OUTPUTFILE="${outfile}"
     
-    while [ "$iters" -lt "$count" ]
-    do
-	# 3. set output file
-	outfile="${outdir}/${core}_${iters}_${version}_${machine}.debug" #maybe change extension
-	export OUTPUTFILE="${outfile}"
-	
-	echo "un-taring"
-
-	tar -xzf ${tarpath}
-	cd ${makepath}
-	
-	# another ocaml specific thing
-	env TMPDIR="${path}/tmp"
-	
-	echo "building"
-	
-	./configure --prefix ${installprefix}
-
-	make world && make install
-
-	echo "make done"
-
-	echo "cleaning"
-	
-	cd ${makepath}/..
-	rm -rf ${makepath}
-	rm -rf ${path}/tmp
-	rm -rf ${installprefix}
-
-	iters=$((iters + 1))
-    done
-
-    core=$((core + 1))
+    echo "un-taring"
+    
+    tar -xzf ${tarpath}
+    cd ${makepath}
+    
+    # another ocaml specific thing
+    env TMPDIR="${path}/tmp"
+    
+    echo "building"
+    
+    ./configure --prefix ${installprefix}
+    
+    make world && make install
+    
+    echo "make done"
+    
+    echo "cleaning"
+    
+    cd ${makepath}/..
+    rm -rf ${makepath}
+    rm -rf ${path}/tmp
+    rm -rf ${installprefix}
+    
+    iters=$((iters + 1))
 done
 
 export PATH="$oldpath" # restore old path
