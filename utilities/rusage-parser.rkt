@@ -149,7 +149,7 @@
   (define root (create-target "<ROOT>"))
   (set-makegraph-root! mgraph root)
 
-  (define (parse-line line ts prqs? ttimes dirs submakes shcalls)
+  (define (parse-line line ts prqs? ttimes dirs submakes shcalls overheads)
     (define tid (caar ts)) ;; mutable pair <name,makefile>
     ;; 2nd thing is makefile; which may be #f
     (define t (cdar ts)) ;; (car ts) is a pair of <tid,target>
@@ -214,18 +214,29 @@
          
          (read-file (cons (cons ntarget-id ntarget) ts)
                     (cons #f prqs?) (cons '() ttimes)
-                    (list (car rest)) submakes shcalls)]
+                    (list (car rest)) submakes shcalls overheads)]
+	[`("Start" "of" "make" "overhead:" ,ts_ . ,rest)
+	 (define start (string->number ts_))
+	 (read-file ts prqs? ttimes dirs submakes shcalls (cons (list start) overheads))]
+	[`("End" "of" "make" "overhead:" ,ts_ . ,rest)
+	
+	 (define end (string->number ts_))
+	 (read-file ts prqs? ttimes dirs submakes shcalls (cons (cons end (car overheads))
+	 	       	     	    	 	  	  	(cdr overheads)))]
         [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
+	 ;; TODO: add overhead time to this somehow......
+	 (define stmp (cadr (car overheads)))	
+	 (define etmp (car (car overheads)))
 
          (define parent (cdadr ts)) ;; should be <ROOT>
-         (add-recipe parent tid (car ttimes))
+         (add-recipe parent tid (cons (- etmp stmp) (car ttimes)))
 
          (when (target-in-graph? mgraph tid)
            (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
 
          (add-target-to-makegraph mgraph tid t)
          
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) (cdr dirs) submakes shcalls)]
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) (cdr dirs) submakes shcalls (cdr overheads))]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
@@ -233,21 +244,21 @@
          (read-file (cdr ts) (if (car prqs?)
                                  (cons #f (cdr prqs?))
                                  prqs?)
-                    (cdr ttimes) dirs submakes shcalls)]
+                    (cdr ttimes) dirs submakes shcalls overheads)]
         [`("No" "need" "to" "remake" "target" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "No need to remake")
          
          (process-finished-target)
          
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls)]
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls overheads)]
         [`("Successfully" "remade" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Successfully remade")
          
          (process-finished-target)
          
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls)]
+         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls overheads)]
         [`("Pruning" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          ;; make has decided this target doesnt need to be considered. so
@@ -267,17 +278,17 @@
              (add-dependency t ntarget-id (list 0))
              (add-recipe t ntarget-id (list 0)))
          
-         (read-file ts prqs? ttimes dirs submakes shcalls)]
+         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
          (define tname (clean-target-name target))
          (check-current-target tname t "must remake target")
          
-         (read-file ts prqs? ttimes dirs submakes shcalls)]
+         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
         [`("Invoking" "recipe" "from" ,mkfile "to" "update" "target" ,target . ,rest) ;; not sure what this line indicates......
          (define tname (clean-target-name target))
          (check-current-target tname t "invoking recipe")
          
-         (read-file ts prqs? ttimes dirs submakes shcalls)]
+         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
         [`("executing" "shell-command:" ,n_ . ,cmd)
          (when (equal? (target-name t) "<ROOT>")
            (printf "Not considering a target and running cmd ~a\n" cmd))
@@ -310,9 +321,9 @@
             (set-shcall-num-submakes! nshcall (+ 1 (shcall-num-submakes nshcall)))
             (set-shcall-duplicate?! nshcall #t)
             
-            (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) (cons nshcall shcalls))]
+            (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) (cons nshcall shcalls) overheads)]
            [else
-            (parse-line nextline ts prqs? ttimes dirs submakes (cons nshcall shcalls))])]
+            (parse-line nextline ts prqs? ttimes dirs submakes (cons nshcall shcalls) overheads)])]
         
         [`("executing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
          ;; parse cmd looking for -C dir
@@ -341,11 +352,11 @@
          ;; increment # of submakes launches by this shell call
          (set-shcall-num-submakes! (car shcalls) (+ 1 (shcall-num-submakes (car shcalls))))
          
-         (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) shcalls)]
+         (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) shcalls overheads)]
         [`("Finished" "prerequisites" "of" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "finished prereqs")
-         (read-file ts (cons #f (cdr prqs?)) ttimes dirs submakes shcalls)]
+         (read-file ts (cons #f (cdr prqs?)) ttimes dirs submakes shcalls overheads)]
         [`("Considering" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          #| considering a new target.  MIGHT need to create a new 
@@ -359,7 +370,7 @@
            (set-submake-depth! (car submakes) (+ 1 (submake-depth (car submakes)))))
          
          (read-file (cons (cons ntarget-id ntarget) ts)
-                    (cons #t prqs?) (cons '() ttimes) dirs submakes shcalls)]
+                    (cons #t prqs?) (cons '() ttimes) dirs submakes shcalls overheads)]
         [`("argv=" . ,rest)
          (define cmd (string-join rest " "))
          (define timesline (read-full-line fip))
@@ -385,7 +396,7 @@
                    [(shcall-duplicate? (car shcalls)) ;; ignore it
                     (when DEBUG
                       (printf "ignoring cmd ~a\n" cmd))
-                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls))]
+                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls) overheads)]
                    [(> (shcall-num-submakes (car shcalls)) 0) ;; launched at least 1 submake but
                     ;; "not a duplicate"
                     ;; still need to do some sort of math.....
@@ -417,13 +428,13 @@
                     (set-rusage-data-submake?! info #t)
                     (add-recipe t tmp-FAKE-ID (list info))
                     
-                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls))]
+                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls) overheads)]
                    [else ;; if this is not a submake......
                     (set! SHELLCOUNT (+ 1 SHELLCOUNT))
                     
                     (read-file ts prqs? (cons (cons info (car ttimes))
                                               (cdr ttimes))
-                               dirs submakes (cdr shcalls))])]
+                               dirs submakes (cdr shcalls) overheads)])]
                 [else
                  (error 'parse-line "Got ~a instead of 'finished shell-command:' following ~a" finishline line)]))]
            [else
@@ -445,7 +456,11 @@
             (lambda (info)
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
-                 (define n (string->number n_))
+                 ;; TODO: add overhead time to this somehow...
+		 (define stmp (cadr (car overheads)))	
+	 	 (define etmp (car (car overheads)))		
+
+		 (define n (string->number n_))
                  ;; should be at top of submake stack so check that n's match
                  (when (empty? submakes)
                    (error 'parse-line "Submakes is empty"))
@@ -485,29 +500,29 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID (list info))]
+                    (add-recipe t tmp-FAKE-ID (list (- etmp stmp) info))]
                    [else
                     ;; add info to an edge
                     (define last-edge (get-last-edge t))
                     (set-rusage-data-submake?! info #t)
-                    (set-edge-data! last-edge (cons info (edge-data last-edge)))])]
+                    (set-edge-data! last-edge (cons (- etmp stmp) (cons info (edge-data last-edge))))])]
                 [else
                  (error 'parse-line "Expected finishing submake line, got ~a instead" finishline)])
               
-              (read-file ts prqs? ttimes (cdr dirs) (cdr submakes) shcalls))]
+              (read-file ts prqs? ttimes (cdr dirs) (cdr submakes) shcalls (cdr overheads)))]
            [else
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
         [else
          (when DEBUG
            (printf "Didn't match ~a\n" line))
-         (read-file ts prqs? ttimes dirs submakes shcalls)])))
+         (read-file ts prqs? ttimes dirs submakes shcalls overheads)])))
     
-  (define (read-file ts prqs? ttimes dirs submakes shcalls)
+  (define (read-file ts prqs? ttimes dirs submakes shcalls overheads)
     (define line (read-full-line fip))
-    (parse-line line ts prqs? ttimes dirs submakes shcalls))
+    (parse-line line ts prqs? ttimes dirs submakes shcalls overheads))
       
-  (read-file (list (cons root-id root)) (list #f) (list '()) #f '() '())
+  (read-file (list (cons root-id root)) (list #f) (list '()) #f '() '() '())
   (add-target-to-makegraph mgraph root-id root)
   mgraph)
       
