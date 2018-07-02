@@ -5,9 +5,9 @@
 # args
 version=$1
 machine=$2
-count=$3
-makepath=$4
-tarpath=$5
+makepath=$3
+tarpath=$4
+count=$5
 
 path=$(pwd)
 

@@ -49,7 +49,7 @@ env TMPDIR="${path}/tmp"
 
 echo "building"
 
-./configure --prefix ${installprefix} &>> ${OUTPUTFILE} && make world && make install
+./configure --prefix ${installprefix} &>> ${OUTPUTFILE} && strace -f make world &> /data/beehive/home.local/sjspall/straceout.debug && strace -f make install &>> /data/beehive/home.local/sjspall/straceout.debug
 
 export PATH="$oldpath" # restore old path
 

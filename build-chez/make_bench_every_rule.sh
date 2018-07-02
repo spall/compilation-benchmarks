@@ -16,7 +16,7 @@ shellpath="${path}/../rusage /bin/bash"
 makeshell="${path}/../make.sh"
 
 tstamp=$(date +%s)
-outfile="$path/../../chez-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
+outfile="${path}/../../chez-results/${tstamp}_${version}_${machine}.out"  # for some reason using version here doesnt work.
 
 # create results directory if it doesnt exist
 mkdir -p ${path}/../../chez-results

@@ -9,6 +9,14 @@ count=$3
 makepath=$4
 tarpath=$5
 
+<<<<<<< Updated upstream
+=======
+MAX=10 # number of cores we have access to. go from 0 to 31
+
+oldpath=$PATH # save old path so we can restore when we are done
+export PATH="/data/beehive/home.local/sjspall/:$PATH" 
+
+>>>>>>> Stashed changes
 path=$(pwd)
 
 tstamp=$(date +%s)
@@ -77,6 +85,8 @@ done
 
 rm -f ${path}/tmp.out
 rm -rf ${path}/tmp
+
+export PATH=$oldpath
 
 echo "Done"
 
