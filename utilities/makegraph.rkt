@@ -47,17 +47,18 @@
   (write-string ", " port)
   (write (target-mfile t) port)
   (write-string "\n" port)
-  (write-string "Dependencies:\n" port)
-  (for ([d (target-deps t)])
+  (write-string "Dependencies and recipes:\n" port)
+  (for ([d (target-out-edges t)])
     (recur d port)
     (write-string "\n" port))
-  (write-string "Recipes:\n" port)
-  (for ([r (target-recipes t)])
+  (write-string "In edges:\n" port)
+  (for ([r (target-in-edges t)])
     (recur r port)
     (write-string "\n" port))
   (when mode (write-string ">" port)))
 
-(struct target (id name mfile deps recipes)
+;; out edges are recipes and deps; in-edges are edges where this target is the end.
+(struct target (id name mfile out-edges in-edges)
   #:methods gen:custom-write
   [(define write-proc target-print)]
   #:mutable #:transparent)
@@ -92,8 +93,8 @@
   (target (get-tid)
           name
           #f  ; mfile
-          '() ; dependencies
-          '())) ; recipes
+          '() ; out-edges
+          '())) ; in-edges
 
 (define (insert-edge e ls)
   (cond
@@ -105,7 +106,7 @@
      (cons (car ls)
            (insert-edge e (cdr ls)))]))
 
-(define (remove-edge t e)
+(define (remove-edge t e direction)
   (define (helper ls)
     (cond
       [(empty? ls)
@@ -115,27 +116,29 @@
       [else
        (cons (car ls) (helper (cdr ls)))]))
   
-  (if (equal? 'dep (edge-type e))
-      (set-target-deps! t (helper (target-deps t)))
-      (set-target-recipes! t (helper (target-recipes t)))))
+  (if (equal? direction 'out)
+      (set-target-out-edges! t (helper (target-out-edges t)))
+      (set-target-in-edges! t (helper (target-in-edges t)))))
 
-(define (add-edge t e [t2 #f])
+(define (add-edge t e direction [t2 #f])
   (when t2
     (set-edge-type! e t2))
 
-  (if (equal? 'dep (edge-type e))
-      (set-target-deps! t (insert-edge e (target-deps t)))
-      (set-target-recipes! t (insert-edge e (target-recipes t)))))
+  (if (equal? direction 'out)
+      (set-target-out-edges! t (insert-edge e (target-out-edges t)))
+      (set-target-in-edges! t (insert-edge e (target-in-edges t)))))
 
 ;; adds a recipe edge
-(define (add-recipe t recipe info)
-  (set-target-recipes! t (cons (edge recipe info 'seq (get-edge-id))
-                               (target-recipes t))))
+(define (add-recipe t recipe recipe-t info)
+  (define tmp (edge recipe info 'seq (get-edge-id)))
+  (set-target-in-edges! recipe-t (cons tmp (target-in-edges recipe-t)))
+  (set-target-out-edges! t (cons tmp (target-out-edges t))))
 
 ;; adds a dependency edge
-(define (add-dependency t dep info)
-  (set-target-deps! t (cons (edge dep info 'dep (get-edge-id))
-                            (target-deps t))))
+(define (add-dependency t dep dep-t info)
+  (define tmp (edge dep info 'dep (get-edge-id)))
+  (set-target-in-edges! dep-t (cons tmp (target-in-edges dep-t)))
+  (set-target-out-edges! t (cons tmp (target-out-edges t))))
 
 ;; ----------------- End of target code ------------------------------
 
