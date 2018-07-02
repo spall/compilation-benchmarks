@@ -5,7 +5,8 @@
          racket/list
          "makegraph.rkt"
          (only-in"makegraphfunctions.rkt"
-                 collapse-targets)
+                 collapse-targets
+		 get-last-edge)
          "flags.rkt")
 
 (provide parse-rusage)
@@ -32,40 +33,17 @@
 (define (ends-semicolon? str)
   (string-suffix? str ";"))
 
-(define (get-last-edge-helper deps recipes)
-  (cond
-    [(and (not (empty? deps))
-          (not (empty? recipes)))
-     (define lastdep (car deps))
-     (define lastrecipe (car recipes))
-     (if (< (edge-id lastdep) (edge-id lastrecipe))
-         (values lastdep (cdr deps) recipes)
-         (values lastrecipe deps (cdr recipes)))]
-    [(not (empty? deps))
-     (values (car deps) (cdr deps) recipes)]
-    [(not (empty? recipes))
-     (values (car recipes) deps (cdr recipes))]
-    [else
-     (error 'get-last-edge "No edges")]))
-
-(define (get-last-edge t)
-  (let-values ([(e d r) (get-last-edge-helper (target-deps t) (target-recipes t))])
-    e))
-
 (define (get-last-edges t n_)
-  (define (driver deps recipes n)
+  (define (driver edges n)
     (cond
       [(= 0 n)
        '()]
-      [(and (empty? deps) (empty? recipes))
+      [(empty? edges)
        (error 'get-last-edges "No more edges; still needed ~a more" n)]
       [else
-       (call-with-values (lambda ()
-                           (get-last-edge-helper deps recipes))
-                         (lambda (e d r)
-                           (cons e (driver d r (- n 1)))))]))
-
-  (driver (target-deps t) (target-recipes t) n_))
+       (cons (car edges) (driver (cdr edges) (- n 1)))]))
+       
+  (driver (target-out-edges t)  n_))	
 
 (define (read-full-line fip)
   (let loop ()
@@ -175,8 +153,8 @@
       (define parent (cdadr ts))
 
       (if (cadr prqs?)
-          (add-dependency parent tid (car ttimes))
-          (add-recipe parent tid (car ttimes)))
+          (add-dependency parent tid t (car ttimes))
+          (add-recipe parent tid t (car ttimes)))
       
       (cond
         [(target-in-graph? mgraph tid)
@@ -188,12 +166,9 @@
          ;; us processing a build path... and if we "reprocess" a target, we've just
          ;; processed another build path and we want to record that path in the graph
          ;; with new edges.
-         (set-target-deps! tmp (append (target-deps t) (target-deps tmp)))
-         ;; TODO: should the above guarantee edges are sorted?
-         ;; Will edges of t always have lower numbers than edges already in tmp?
+         (set-target-out-edges! tmp (append (target-out-edges t) (target-out-edges tmp)))
          
-         ;; TODO: same question here.
-         (set-target-recipes! tmp (append (target-recipes t) (target-recipes tmp)))]
+	 (set-target-in-edges! tmp (append (target-in-edges t) (target-in-edges tmp)))]
         [else
          ;; add target to graph
          (when DEBUG
@@ -229,7 +204,7 @@
 	 (define etmp (car (car overheads)))
 
          (define parent (cdadr ts)) ;; should be <ROOT>
-         (add-recipe parent tid (cons (- etmp stmp) (car ttimes)))
+         (add-recipe parent tid t (cons (- etmp stmp) (car ttimes)))
 
          (when (target-in-graph? mgraph tid)
            (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
@@ -275,8 +250,8 @@
            (add-target-to-makegraph mgraph ntarget-id tmp))
          
          (if (car prqs?)
-             (add-dependency t ntarget-id (list 0))
-             (add-recipe t ntarget-id (list 0)))
+             (add-dependency t ntarget-id (get-target mgraph ntarget-id) (list 0))
+             (add-recipe t ntarget-id (get-target mgraph ntarget-id) (list 0)))
          
          (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
@@ -420,13 +395,13 @@
                     (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-		      (remove-edge t last-edge)
-                      (add-edge tmp-FAKE last-edge 'dep))
+		      (remove-edge t last-edge 'out)
+                      (add-edge tmp-FAKE last-edge 'out 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID (list info))
+                    (add-recipe t tmp-FAKE-ID tmp-FAKE (list info))
                     
                     (read-file ts prqs? ttimes dirs submakes (cdr shcalls) overheads)]
                    [else ;; if this is not a submake......
@@ -494,13 +469,13 @@
                     (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-		      (remove-edge t last-edge)
-                      (add-edge tmp-FAKE last-edge 'dep))
+		      (remove-edge t last-edge 'out)
+                      (add-edge tmp-FAKE last-edge 'out 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID (list (- etmp stmp) info))]
+                    (add-recipe t tmp-FAKE-ID tmp-FAKE (list (- etmp stmp) info))]
                    [else
                     ;; add info to an edge
                     (define last-edge (get-last-edge t))
