@@ -1,3 +1,0 @@
-[submodule "custom-make/make-4.2"]
-	path = custom-make/make-4.2
-	url = https://github.com/spall/make-4.2.git
