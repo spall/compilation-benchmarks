@@ -99,7 +99,7 @@
     [else
      (unless (number? (car ttimes))
        (error 'sum-times "neither rusage-data nor a number ~a" (car ttimes)))
-       (printf "summing ~a\n" (car ttimes))
+       #;(printf "summing ~a\n" (car ttimes))
      (+ (car ttimes)
         (sum-times (cdr ttimes)))]))
 
@@ -156,24 +156,30 @@
 
 (define (longest-leaf graph)
   
-  (for/fold ([maxt #f]
+  (define-values (target_ time_)
+    (for/fold ([maxt #f]
   	     [max   0])
   	    ([t (in-hash-values (makegraph-targets graph))])
     ;; test if target is a leaf
-      (when (empty? (target-out-edges t))
-        ;; is a leaf
-	;; TODO: Now add up times on edge into it. 
-	(define total
-	  (for/fold ([max 0])
-	  	    ([e (target-in-edges t)])
-	     (define tmp (sum-times (edge-data e)))
-	     (if (> tmp max)
-	     	 tmp
-		 max)))
+      (cond
+        [(empty? (target-out-edges t))
+         ;; is a leaf
+	 ;; TODO: Now add up times on edge into it. 
+	 (define total
+	   (for/fold ([max 0])
+	   	    ([e (target-in-edges t)])
+	      (define tmp (sum-times (edge-data e)))
+	      (if (> tmp max)
+	      	 tmp
+	 	 max)))
 	
-	(if (> total max)
-	    (values t total)
-	    (values maxt max)))))
+	 (if (> total max)
+	     (values t total)
+	     (values maxt max))]
+	[else
+	 (values maxt max)])))
+
+  time_)
 
 (define (longest-recipe root_ graph)
   (void))
