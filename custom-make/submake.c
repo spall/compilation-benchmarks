@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
     }
     args[j] = 0;
  
-    execvp("make-4.2", args);
+    execvp("actual-make", args);
     perror("execvp");
     exit(EXIT_FAILURE);
   } else if (mpid == -1) {
