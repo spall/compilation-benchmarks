@@ -1,3 +1,0 @@
-[submodule "custom-make/actual-make"]
-	path = custom-make/actual-make
-	url = https://github.com/spall/make.git
