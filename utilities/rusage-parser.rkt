@@ -121,40 +121,49 @@
     [else
      #f]))
 
+(struct state (ts prqs? ttimes dirs submakes shcalls overheads))
+
 (define (parse-file fip)
   (define mgraph (create-makegraph))
   (define root-id (mcons "<ROOT>" "top"))
   (define root (create-target "<ROOT>"))
   (set-makegraph-root! mgraph root)
 
-  (define (parse-line line ts prqs? ttimes dirs submakes shcalls overheads)
-    (define tid (caar ts)) ;; mutable pair <name,makefile>
+  (define (parse-line line st)
+    (define ts-local (state-ts st))
+    (define prqs?-local (state-prqs? st))
+    (define ttimes-local (state-ttimes st))
+    (define dirs-local (state-dirs st))
+    (define submakes-local (state-submakes st))
+    (define shcalls-local (state-shcalls st))
+    (define overheads-local (state-overheads st))
+    (define tid (caar ts-local)) ;; mutable pair <name,makefile>
     ;; 2nd thing is makefile; which may be #f
-    (define t (cdar ts)) ;; (car ts) is a pair of <tid,target>
+    (define t (cdar ts-local)) ;; (car ts) is a pair of <tid,target>
 
     (define (process-finished-target)
       ;; mfile is going to be top of dirs.....
-      (when (list? (car dirs))
-        (error 'process-finished-target "Car of dirs is ~a is a list" dirs))
+      (when (list? (car dirs-local))
+        (error 'process-finished-target "Car of dirs is ~a is a list" dirs-local))
       
-      (set-mcdr! tid (car dirs)) ;; just a dir
-      (set-target-mfile! t (car dirs))
+      (set-mcdr! tid (car dirs-local)) ;; just a dir
+      (set-target-mfile! t (car dirs-local))
 
-      (unless (empty? submakes)
-        (set-submake-depth! (car submakes) (- (submake-depth (car submakes)) 1))
-        (when (= 0 (submake-depth (car submakes)))
-          (set-submake-count! (car submakes) (+ (submake-count (car submakes)) 1))))
+      (unless (empty? submakes-local)
+        (set-submake-depth! (car submakes-local) (- (submake-depth (car submakes-local)) 1))
+        (when (= 0 (submake-depth (car submakes-local)))
+          (set-submake-count! (car submakes-local) (+ (submake-count (car submakes-local)) 1))))
       
-      (when (empty? (cdr ts))
+      (when (empty? (cdr ts-local))
         (error 'parse-line "Expected at least one more target to be in stack"))
-      (when (empty? (cdr prqs?))
+      (when (empty? (cdr prqs?-local))
         (error 'parse-line "Expected at least one more prq? to be in stack"))
 
-      (define parent (cdadr ts))
+      (define parent (cdadr ts-local))
 
-      (if (cadr prqs?)
-          (add-dependency parent tid t (car ttimes))
-          (add-recipe parent tid t (car ttimes)))
+      (if (cadr prqs?-local)
+          (add-dependency parent tid (car ttimes-local))
+          (add-recipe parent tid (car ttimes-local)))
       
       (cond
         [(target-in-graph? mgraph tid)
@@ -186,60 +195,76 @@
          (define ntarget-id (mcons tname (car rest)))
          (define ntarget (create-target tname))
          (set-target-mfile! ntarget (car rest))
-         
-         (read-file (cons (cons ntarget-id ntarget) ts)
-                    (cons #f prqs?) (cons '() ttimes)
-                    (list (car rest)) submakes shcalls overheads)]
+         (read-file (struct-copy state st
+                                 [ts (cons (cons ntarget-id ntarget) ts-local)]
+                                 [prqs? (cons #f prqs?-local)]
+                                 [ttimes (cons '() ttimes-local)]
+                                 [dirs (list (car rest))]))]
 	[`("Start" "of" "make" "overhead:" ,ts_ . ,rest)
 	 (define start (string->number ts_))
-	 (read-file ts prqs? ttimes dirs submakes shcalls (cons (list start) overheads))]
+         (read-file (struct-copy state st
+                                 [overheads (cons (list start) overheads-local)]))]
 	[`("End" "of" "make" "overhead:" ,ts_ . ,rest)
 	
 	 (define end (string->number ts_))
-	 (read-file ts prqs? ttimes dirs submakes shcalls (cons (cons end (car overheads))
-	 	       	     	    	 	  	  	(cdr overheads)))]
+         (read-file (struct-copy state st
+                                 [overheads (cons (cons end (car overheads-local)) (cdr overheads-local))]))]
         [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
 	 ;; TODO: add overhead time to this somehow......
-	 (define stmp (cadr (car overheads)))	
-	 (define etmp (car (car overheads)))
+	 (define stmp (cadr (car overheads-local)))	
+	 (define etmp (car (car overheads-local)))
 
-         (define parent (cdadr ts)) ;; should be <ROOT>
-         (add-recipe parent tid t (cons (- etmp stmp) (car ttimes)))
+         (define parent (cdadr ts-local)) ;; should be <ROOT>
+         (add-recipe parent tid (cons (- etmp stmp) (car ttimes-local)))
 
          (when (target-in-graph? mgraph tid)
            (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
 
          (add-target-to-makegraph mgraph tid t)
-         
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) (cdr dirs) submakes shcalls (cdr overheads))]
+
+         (read-file (struct-copy state st
+                                 [ts (cdr ts-local)]
+                                 [prqs? (cdr prqs?-local)]
+                                 [ttimes (cdr ttimes-local)]
+                                 [dirs (cdr dirs-local)]
+                                 [overheads (cdr overheads-local)]))]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
          (process-finished-target)
-         (read-file (cdr ts) (if (car prqs?)
-                                 (cons #f (cdr prqs?))
-                                 prqs?)
-                    (cdr ttimes) dirs submakes shcalls overheads)]
+
+         (read-file (struct-copy state st
+                                 [ts (cdr ts-local)]
+                                 [prqs? (if (car prqs?-local)
+                                            (cons #f (cdr prqs?-local))
+                                            prqs?-local)]
+                                 [ttimes (cdr ttimes-local)]))]
         [`("No" "need" "to" "remake" "target" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "No need to remake")
          
          (process-finished-target)
-         
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls overheads)]
+
+         (read-file (struct-copy state st
+                                 [ts (cdr ts-local)]
+                                 [prqs? (cdr prqs?-local)]
+                                 [ttimes (cdr ttimes-local)]))]
         [`("Successfully" "remade" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Successfully remade")
          
          (process-finished-target)
-         
-         (read-file (cdr ts) (cdr prqs?) (cdr ttimes) dirs submakes shcalls overheads)]
+
+         (read-file (struct-copy state st
+                                 [ts (cdr ts-local)]
+                                 [prqs? (cdr prqs?-local)]
+                                 [ttimes (cdr ttimes-local)]))]
         [`("Pruning" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          ;; make has decided this target doesnt need to be considered. so
          ;; add it with a time of 0
          
-         (define ntarget-id (mcons tname (car dirs)))
+         (define ntarget-id (mcons tname (car dirs-local)))
          
          ;; check if target already exists in graph
          (unless (target-in-graph? mgraph ntarget-id) ;; create target and add to graph
@@ -249,21 +274,21 @@
            (set-target-mfile! tmp (mcdr ntarget-id))
            (add-target-to-makegraph mgraph ntarget-id tmp))
          
-         (if (car prqs?)
-             (add-dependency t ntarget-id (get-target mgraph ntarget-id) (list 0))
-             (add-recipe t ntarget-id (get-target mgraph ntarget-id) (list 0)))
-         
-         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
+         (if (car prqs?-local)
+             (add-dependency t ntarget-id (list 0))
+             (add-recipe t ntarget-id (list 0)))
+
+         (read-file st)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
          (define tname (clean-target-name target))
          (check-current-target tname t "must remake target")
          
-         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
+         (read-file st)]
         [`("Invoking" "recipe" "from" ,mkfile "to" "update" "target" ,target . ,rest) ;; not sure what this line indicates......
          (define tname (clean-target-name target))
          (check-current-target tname t "invoking recipe")
          
-         (read-file ts prqs? ttimes dirs submakes shcalls overheads)]
+         (read-file st)]
         [`("executing" "shell-command:" ,n_ . ,cmd)
          (when (equal? (target-name t) "<ROOT>")
            (printf "Not considering a target and running cmd ~a\n" cmd))
@@ -295,10 +320,14 @@
             ;; increment # of submakes launches by this shell call
             (set-shcall-num-submakes! nshcall (+ 1 (shcall-num-submakes nshcall)))
             (set-shcall-duplicate?! nshcall #t)
-            
-            (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) (cons nshcall shcalls) overheads)]
+
+            (read-file (struct-copy state st
+                                    [dirs (cons ndir dirs-local)]
+                                    [submakes (cons nsubmake submakes-local)]
+                                    [shcalls (cons nshcall shcalls-local)]))]
            [else
-            (parse-line nextline ts prqs? ttimes dirs submakes (cons nshcall shcalls) overheads)])]
+            (parse-line nextline (struct-copy state st
+                                              [shcalls (cons nshcall shcalls-local)]))])]
         
         [`("executing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
          ;; parse cmd looking for -C dir
@@ -318,20 +347,23 @@
                          cdir]))
 
          ;; check if n matches shell call on top of shcall stack
-         (when (empty? shcalls)
+         (when (empty? shcalls-local)
            (error 'parse-line "Shell call stack is empty"))
 
-         (unless (= (shcall-n (car shcalls)) n)
-           (error 'parse-line "Top of shell call stack is shell call ~a; expected it to be shell call ~a\n" (shcall-n (car shcalls)) n))
+         (unless (= (shcall-n (car shcalls-local)) n)
+           (error 'parse-line "Top of shell call stack is shell call ~a; expected it to be shell call ~a\n" (shcall-n (car shcalls-local)) n))
 
          ;; increment # of submakes launches by this shell call
-         (set-shcall-num-submakes! (car shcalls) (+ 1 (shcall-num-submakes (car shcalls))))
-         
-         (read-file ts prqs? ttimes (cons ndir dirs) (cons nsubmake submakes) shcalls overheads)]
+         (set-shcall-num-submakes! (car shcalls-local) (+ 1 (shcall-num-submakes (car shcalls-local))))
+
+         (read-file (struct-copy state st
+                                 [dirs (cons ndir dirs-local)]
+                                 [submakes (cons nsubmake submakes-local)]))]
         [`("Finished" "prerequisites" "of" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "finished prereqs")
-         (read-file ts (cons #f (cdr prqs?)) ttimes dirs submakes shcalls overheads)]
+         (read-file (struct-copy state st
+                                 [prqs? (cons #f (cdr prqs?-local))]))]
         [`("Considering" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          #| considering a new target.  MIGHT need to create a new 
@@ -341,11 +373,13 @@
          (define ntarget (create-target tname))
 
          ;; increase submake depth by 1
-         (unless (empty? submakes)
-           (set-submake-depth! (car submakes) (+ 1 (submake-depth (car submakes)))))
-         
-         (read-file (cons (cons ntarget-id ntarget) ts)
-                    (cons #t prqs?) (cons '() ttimes) dirs submakes shcalls overheads)]
+         (unless (empty? submakes-local)
+           (set-submake-depth! (car submakes-local) (+ 1 (submake-depth (car submakes-local)))))
+
+         (read-file (struct-copy state st
+                                 [ts (cons (cons ntarget-id ntarget) ts-local)]
+                                 [prqs? (cons #t prqs?-local)]
+                                 [ttimes (cons '() ttimes-local)]))]
         [`("argv=" . ,rest)
          (define cmd (string-join rest " "))
          (define timesline (read-full-line fip))
@@ -362,17 +396,18 @@
                 [`("finished" "shell-command:" ,n_ . ,rest)
                  (define n (string->number n_))
                  ;; match n to shell command currently on top of stack.
-                 (when (empty? shcalls)
+                 (when (empty? shcalls-local)
                    (error 'parse-line "shcalls is empty"))
-                 (unless (= n (shcall-n (car shcalls)))
-                   (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls))))
+                 (unless (= n (shcall-n (car shcalls-local)))
+                   (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
                  ;; if this is a submake ...........
                  (cond
-                   [(shcall-duplicate? (car shcalls)) ;; ignore it
+                   [(shcall-duplicate? (car shcalls-local)) ;; ignore it
                     (when DEBUG
                       (printf "ignoring cmd ~a\n" cmd))
-                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls) overheads)]
-                   [(> (shcall-num-submakes (car shcalls)) 0) ;; launched at least 1 submake but
+                    (read-file (struct-copy state st
+                                            [shcalls (cdr shcalls-local)]))]
+                   [(> (shcall-num-submakes (car shcalls-local)) 0) ;; launched at least 1 submake but
                     ;; "not a duplicate"
                     ;; still need to do some sort of math.....
                     ;; can we just get last n nodes and do same thing as we did for submake...
@@ -383,7 +418,7 @@
                     ;; not clear this will ever happen, but
                     ;(printf "Processing shell command with submakes that is not a duplicate ~a; ~a\n" n_ (string-join rest " "))
 
-                    (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls))))
+                    (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls-local))))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
                     ;; create  new fake node.
@@ -401,15 +436,17 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID tmp-FAKE (list info))
-                    
-                    (read-file ts prqs? ttimes dirs submakes (cdr shcalls) overheads)]
+                    (add-recipe t tmp-FAKE-ID (list info))
+
+                    (read-file (struct-copy state st
+                                            [shcalls (cdr shcalls-local)]))]
                    [else ;; if this is not a submake......
                     (set! SHELLCOUNT (+ 1 SHELLCOUNT))
-                    
-                    (read-file ts prqs? (cons (cons info (car ttimes))
-                                              (cdr ttimes))
-                               dirs submakes (cdr shcalls) overheads)])]
+
+                    (read-file (struct-copy state st
+                                            [ttimes (cons (cons info (car ttimes-local))
+                                                          (cdr ttimes-local))]
+                                            [shcalls (cdr shcalls-local)]))])]
                 [else
                  (error 'parse-line "Got ~a instead of 'finished shell-command:' following ~a" finishline line)]))]
            [else
@@ -432,17 +469,17 @@
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
                  ;; TODO: add overhead time to this somehow...
-		 (define stmp (cadr (car overheads)))	
-	 	 (define etmp (car (car overheads)))		
+		 (define stmp (cadr (car overheads-local)))	
+	 	 (define etmp (car (car overheads-local)))		
 
 		 (define n (string->number n_))
                  ;; should be at top of submake stack so check that n's match
-                 (when (empty? submakes)
+                 (when (empty? submakes-local)
                    (error 'parse-line "Submakes is empty"))
-                 (unless (= n (submake-n (car submakes)))
-                   (error 'parse-line "Expected submake with n of ~a to be on top of stack, not ~a" n (submake-n (car submakes))))
-                 (unless (= 0 (submake-depth (car submakes)))
-                   (error 'parse-line "~a depth is ~a not zero" argv-cmd (submake-depth (car submakes))))
+                 (unless (= n (submake-n (car submakes-local)))
+                   (error 'parse-line "Expected submake with n of ~a to be on top of stack, not ~a" n (submake-n (car submakes-local))))
+                 (unless (= 0 (submake-depth (car submakes-local)))
+                   (error 'parse-line "~a depth is ~a not zero" argv-cmd (submake-depth (car submakes-local))))
                  (define cdir (car rest))
                  (when DEBUG
                    (printf "current directory is ~a\n" cdir))
@@ -452,10 +489,10 @@
                                  (string-append cdir "/" dir)]
                                 [else
                                  cdir]))
-                 (unless (equal? (car dirs) ldir)
-                   (error 'parse-line "Expected to be leaving directory ~a; but leaving ~a instead." (car dirs) cdir))
+                 (unless (equal? (car dirs-local) ldir)
+                   (error 'parse-line "Expected to be leaving directory ~a; but leaving ~a instead." (car dirs-local) cdir))
 
-                 (define count (submake-count (car submakes)))
+                 (define count (submake-count (car submakes-local)))
                  (cond
                    [(> count 1) ;; use FAKE target.
                     (define last-edges (get-last-edges t count))
@@ -483,21 +520,24 @@
                     (set-edge-data! last-edge (cons (- etmp stmp) (cons info (edge-data last-edge))))])]
                 [else
                  (error 'parse-line "Expected finishing submake line, got ~a instead" finishline)])
-              
-              (read-file ts prqs? ttimes (cdr dirs) (cdr submakes) shcalls (cdr overheads)))]
+
+              (read-file (struct-copy state st
+                                      [dirs (cdr dirs-local)]
+                                      [submakes (cdr submakes-local)]
+                                      [overheads (cdr overheads-local)])))]
            [else
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
         [else
          (when DEBUG
            (printf "Didn't match ~a\n" line))
-         (read-file ts prqs? ttimes dirs submakes shcalls overheads)])))
-    
-  (define (read-file ts prqs? ttimes dirs submakes shcalls overheads)
+         (read-file st)])))
+  
+  (define (read-file st)
     (define line (read-full-line fip))
-    (parse-line line ts prqs? ttimes dirs submakes shcalls overheads))
-      
-  (read-file (list (cons root-id root)) (list #f) (list '()) #f '() '() '())
+    (parse-line line st))
+  
+  (read-file (state (list (cons root-id root)) (list #f) (list '()) #f '() '() '()))
   (add-target-to-makegraph mgraph root-id root)
   mgraph)
       
