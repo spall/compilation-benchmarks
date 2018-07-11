@@ -1,7 +1,7 @@
 
 DIR = $(shell pwd)
 
-all: bin/make bin/submake bin/make-4.2
+all: bin/make bin/submake bin/actual-make
 
 bin/make: make.c custom-time.c helper.c
 	gcc -o make make.c custom-time.c helper.c
@@ -11,12 +11,12 @@ bin/submake: submake.c custom-time.c helper.c
 	gcc -o submake submake.c custom-time.c helper.c
 	mv submake bin/submake
 
-bin/make-4.2: 
-	cd make-4.2 && ./configure --prefix=$(DIR)/tmp && make && make install
-	cp tmp/bin/make bin/make-4.2
+bin/actual-make: 
+	cd actual-make && autoreconf -i && ./configure --prefix=$(DIR)/tmp && make update && make && make install
+	cp tmp/bin/make bin/actual-make
 	rm -rf tmp
 
 clean:
-	rm -f bin/make bin/submake bin/make-4.2
+	rm -f bin/make bin/submake bin/actual-make
 
 
