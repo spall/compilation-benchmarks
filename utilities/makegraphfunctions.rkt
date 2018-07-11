@@ -7,6 +7,7 @@
          "flags.rkt")
 
 (provide get-targets
+	 get-last-edge
          create-dotfile-string
          print-all-targets-and-mfiles
          collapse-targets
@@ -18,24 +19,15 @@
 	 predicted-speed-perfect-linear
          verify-edge-times
          verify-edges
-         
+	 longest-leaf         
          print-graph)
 
 (define (get-last-edge t)
   (cond
-    [(and (not (empty? (target-deps t)))
-          (not (empty? (target-recipes t))))
-     (define lastdep (car (target-deps t)))
-     (define lastrecipe (car (target-recipes t)))
-     (if (< (target-id lastdep) (target-id lastrecipe)) ;;
-         lastdep
-         lastrecipe)]
-    [(not (empty? (target-deps t)))
-     (car (target-deps t))]
-    [(not (empty? (target-recipes t)))
-     (car (target-recipes t))]
+    [(empty? (target-out-edges t))
+     #f]
     [else
-     #f]))
+     (car (target-out-edges t))]))
 
 ;; return a list of possible targets
 (define (get-targets graph tname)
@@ -50,15 +42,11 @@
   (define visited (make-hash))
   (define (driver root lbound ubound)
     
-    (define edges (sort (append (target-deps root) (target-recipes root))
-    	    	  	(lambda (e1 e2)
-			  (< (edge-id e1) (edge-id e2)))))
-    
     (define-values (workdeps workrecipes leid_)
       (for/fold ([dsum 0]
     	       	 [wsum 0]
 	         [leid ubound])
-	        ([e (reverse edges)])
+	        ([e (reverse (target-out-edges root))])
         (cond
        	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
           (when (hash-ref visited e #f)
@@ -86,20 +74,15 @@
 
     (+ workdeps workrecipes))
 
-  (define w (driver root_ (- (apply min (map edge-id (append (target-deps root_)
-                                                             (target-recipes root_))))
-                             1)
-                    1))
+
+  (define w (driver root_ (- (edge-id (car (target-out-edges root_))) 1) 1))
 
   ;; Checking that we visited each edge once. If we did not; there is a problem.
   ;; this only works if we are checking entire graph.
   (for ([t (in-hash-values (makegraph-targets graph))])
-    (for ([e (target-deps t)])
+    (for ([e (target-out-edges t)])
       (unless (hash-ref visited e #f)
-        (error 'work "dep Never visited edge ~a; target is ~a during work calculation!" e t)))
-    (for ([e (target-recipes t)])
-      (unless (hash-ref visited e #f)
-        (error 'work "recipe Never visited edge ~a; target is ~a during work calculation!" e t))))
+        (error 'work "dep Never visited edge ~a; target is ~a during work calculation!" e t))))
   w)
     
 (define (sum-times ttimes)
@@ -116,6 +99,7 @@
     [else
      (unless (number? (car ttimes))
        (error 'sum-times "neither rusage-data nor a number ~a" (car ttimes)))
+       #;(printf "summing ~a\n" (car ttimes))
      (+ (car ttimes)
         (sum-times (cdr ttimes)))]))
 
@@ -124,15 +108,11 @@
   (define visited (make-hash))
   (define (driver root lbound ubound)
 
-    (define edges (sort (append (target-deps root) (target-recipes root))
-    	    	  	(lambda (e1 e2)
-			  (< (edge-id e1) (edge-id e2)))))
-
     (define-values (spandeps workdeps leid_)
       (for/fold ([max_ 0]
       		 [sum 0]
 		 [leid ubound])
-		([e (reverse edges)])
+		([e (reverse (target-out-edges root))])
 	(cond
 	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
 	  (when (hash-ref visited e #f)
@@ -157,10 +137,7 @@
 
       (+ spandeps workdeps))
   
-  (define s (driver root_ (- (apply min (map edge-id (append (target-deps root_)
-                                                             (target-recipes root_))))
-                             1)
-                    1))
+  (define s (driver root_ (- (edge-id (car (target-out-edges root_))) 1) 1))
 
   ;; Checking that we visited each edge once. If we did not; there is a problem.
   ;; this only works if we are checking entire graph.
@@ -173,6 +150,39 @@
         (error 'span "Never visited edge ~a during span calculation!" e))))
   
   s)
+
+(define (longest-target root_ graph)
+  (void)) ;; todo
+
+(define (longest-leaf graph)
+  
+  (define-values (target_ time_)
+    (for/fold ([maxt #f]
+  	     [max   0])
+  	    ([t (in-hash-values (makegraph-targets graph))])
+    ;; test if target is a leaf
+      (cond
+        [(empty? (target-out-edges t))
+         ;; is a leaf
+	 ;; TODO: Now add up times on edge into it. 
+	 (define total
+	   (for/fold ([max 0])
+	   	    ([e (target-in-edges t)])
+	      (define tmp (sum-times (edge-data e)))
+	      (if (> tmp max)
+	      	 tmp
+	 	 max)))
+	
+	 (if (> total max)
+	     (values t total)
+	     (values maxt max))]
+	[else
+	 (values maxt max)])))
+
+  time_)
+
+(define (longest-recipe root_ graph)
+  (void))
 
 ;; factor by which the parallelism of the computation exceeds the number of processors
 (define (parallel-slackness graph pcount)
@@ -220,45 +230,24 @@
 (define (collapse-targets graph)
   (define targets (makegraph-targets graph))
   (for ([t (in-hash-values targets)])
-    (let ([deps (target-deps t)]
-          [children (target-recipes t)])
-      ;; check deps and children for duplicates
-      (set-target-deps! t (let loop ([dps deps])
-                            (cond
-                              [(empty? dps)
-                               '()]
-                              [(member (car dps) (cdr dps))
-                               ;; occurs later so throw away
-                               (loop (cdr dps))]
-                              [else
-                               (cons (car dps) (loop (cdr dps)))])))
-      (set-target-recipes! t (let loop ([chlds children])
-                                (cond
-                                  [(empty? chlds)
-                                   '()]
-                                  [(member (car chlds) (cdr chlds))
-                                   (loop (cdr chlds))]
-                                  [else
-                                   (cons (car chlds) (loop (cdr chlds)))]))))))
+    (set-target-out-edges! t
+      (let loop ([es (target-out-edges t)])
+        (cond
+	  [(empty? es)
+	   '()]
+	  [(member (car es) (cdr es))
+	   (loop (cdr es))]
+	  [else
+	   (cons (car es) (loop (cdr es)))])))))
 
 (define (verify-edges graph)
 
   (for ([t (in-hash-values (makegraph-targets graph))])
     (define es (make-hash))
-    (unless (empty? (target-deps t))
-      (hash-set! es (car (target-deps t)) #t)
-      (for/fold ([last (edge-id (car (target-deps t)))])
-                ([e (cdr (target-deps t))])
-        (when (hash-ref es e #f)
-          (printf "Target <~a,~a> has more than one copy of edge ~a\n" (target-name t) (target-mfile t) (edge-id e)))
-        (hash-set! es e #t)
-        (when (< (edge-id e) last)
-          (printf "edge id ~a is less than last edge id ~a\n" (edge-id e) last))
-        (edge-id e)))
-    (unless (empty? (target-recipes t))
-      (hash-set! es (car (target-recipes t)) #t)
-      (for/fold ([last (edge-id (car (target-recipes t)))])
-                ([e (cdr (target-recipes t))])
+    (unless (empty? (target-out-edges t))
+      (hash-set! es (car (target-out-edges t)) #t)
+      (for/fold ([last (edge-id (car (target-out-edges t)))])
+                ([e (cdr (target-out-edges t))])
         (when (hash-ref es e #f)
           (printf "Target <~a,~a> has more than one copy of edge ~a\n" (target-name t) (target-mfile t) (edge-id e)))
         (hash-set! es e #t)
@@ -272,7 +261,7 @@
     (define-values (workdeps leid_)
       (for/fold ([sum 0]
                  [leid ubound])
-                ([e (reverse (target-deps root))])
+                ([e (reverse (target-out-edges root))])
         ;; each edge has a list of data. Want to verify data that is a "submake" shell call.
         (cond
           [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
@@ -294,37 +283,9 @@
           [else
            (values sum leid)])))
 
-    (define-values (workrecipes __)
-      (for/fold ([sum 0]
-                 [leid leid_])
-                ([e (reverse (target-recipes root))])
-        (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (define t (driver (get-target graph (edge-end e))
-                             (edge-id e)
-                             leid))
-           (define sumtimes (sum-times (edge-data e)))
-           (for ([info (edge-data e)])
-             (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info))
-
-               (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
-                 (when (> diff 0)
-                   (printf "Difference is ~a\n" diff))
-                 (when (< diff 0)
-                   (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
-
-           (values (+ sum sumtimes t)
-                   (edge-id e))]
-          [else
-           (values sum (edge-id e))])))
-
-    (+ workdeps workrecipes))
+    workdeps)
   
-  (driver (makegraph-root graph) (- (apply min (map edge-id (append (target-deps (makegraph-root graph))
-                                                             (target-recipes (makegraph-root graph)))))
-                                    1)
-          1))
+  (driver (makegraph-root graph) (- (edge-id (car (target-out-edges (makegraph-root graph)))) 1) 1))
     
 ;; ------------------------ graphviz dot file --------------------------------
 
@@ -342,18 +303,14 @@
               (target-name t) (target-id t) color)))
       
   (define (create-dotfile-edges v)
-    (append
      (map (lambda (c i)
             (define t (hash-ref targets c (lambda ()
                                             (error 'create-dotfile "Failed to find ~a among graph's targets" c))))
             (format "\"~a~a\" -> \"~a~a\" [label=~a, color=~a];\n" (target-name v) (target-id v)
                     (target-name t) (target-id t) i child-color))
-          (reverse (target-recipes v))
-          (range 1 (+ 1 (length (target-recipes v)))))
+          (reverse (target-out-edges v))
+          (range 1 (+ 1 (length (target-out-edges v))))))
      
-     (map (helper v targets dep-color)
-          (target-deps v))))
-  
   (apply string-append
          (cons "strict digraph {\n"
                (append (for/fold ([accu '()])
@@ -368,18 +325,12 @@
 (define (print-graph graph)
   (for ([n (in-hash-values (makegraph-targets graph))])
     (printf "Processing node <~a,~a,~a>\n" (target-name n) (target-mfile n) (target-id n))
-    (printf "target-deps: ~a\n" (target-deps n))
-    (for ([e (target-deps n)])
+    (printf "target-out-edges: ~a\n" (target-out-edges n))
+    (for ([e (target-out-edges n)])
       (let ([tmp (get-target graph (edge-end e))])
         (printf "Dependency edge between <~a,~a,~a> and <~a,~a,~a> with ID ~a\n\n"
                 (target-name n) (target-mfile n) (target-id n)
                 (target-name tmp) (target-mfile tmp) (target-id tmp) (edge-id e))))
-    (for ([e (target-recipes n)])
-      (let ([tmp (get-target graph (edge-end e))])
-        (printf "Child edge between <~a,~a,~a> and <~a,~a,~a> with ID ~a\n\n"
-                (target-name n) (target-mfile n) (target-id n)
-                (target-name tmp) (target-mfile tmp) (target-id tmp)
-                (edge-id e))))
-
+    
     (printf "Finished processing node <~a,~a,~a>\n" (target-name n) (target-mfile n) (target-id n))))
   

@@ -65,26 +65,31 @@
      (error 'driver "~a is not a directory path" dir-path))
    
    ;; calculate work and sum them
-   (define-values (wsum ssum len)
+   (define-values (wsum ssum lsum len)
      (for/fold ([wsum 0]
      	        [ssum 0]
+		[lsum 0]
      	        [len 0])
 	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
          (let ([work_ (work (makegraph-root graph) graph)]
-	       [span_ (span (makegraph-root graph) graph)])
-	 (printf "~a\n" work_)
-	 (values (+ wsum work_) (+ ssum span_) (+ 1 len))))))
+	       [span_ (span (makegraph-root graph) graph)]
+	       [leaf_ (longest-leaf graph)])
+	 (printf "~a ~a ~a\n" work_ span_ leaf_)
+	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
            
    ;; average predictions
    (define avg-work (/ wsum len))
    (define avg-span (/ ssum len))
-   (printf "pcount, upper, lower, perfect\n")
-   (for ([tc (in-range 1 33)])
+   (define avg-leaf (/ lsum len))
+   (printf "pcount, upper, lower, leaf-upper, leaf-lower, perfect\n")
+   (for ([tc (in-range 1 129)])
      (let ([upred (predicted-speed-upper #f tc avg-work avg-span)]
      	   [lpred (predicted-speed-lower #f tc avg-work avg-span)]
+	   [uleaf (predicted-speed-upper #f tc avg-work avg-leaf)]
+	   [lleaf (predicted-speed-lower #f tc avg-work avg-leaf)]
 	   [plspeed (predicted-speed-perfect-linear #f tc avg-work)])
-       (printf "~a, ~a, ~a, ~a\n" tc upred lpred plspeed)))
+       (printf "~a, ~a, ~a, ~a, ~a, ~a\n" tc upred lpred uleaf lleaf plspeed)))
    
    (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ wsum len)))]
    
@@ -135,8 +140,10 @@
      (printf "parallelism is ~a\n" parallelism))
    
    (when (pspeed?)
-     (define p (predicted-speed-upper graph (string->number (pspeed?))))
-     (printf "Predicted upper bound for ~a processors is ~a seconds.\n" (pspeed?) p))
+     (define pu (predicted-speed-upper graph (string->number (pspeed?))))
+     (define pl (predicted-speed-lower graph (string->number (pspeed?))))
+     (define pp (predicted-speed-perfect-linear graph (string->number (pspeed?))))
+     (printf "Predicted upper bound for ~a processors is ~a seconds; lower bound ~a seconds; perfect linear speed ~a seconds.\n" (pspeed?) pu pl pp))
    
    (when (slackness?)
      (define s (parallel-slackness graph (slackness?)))

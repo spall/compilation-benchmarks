@@ -47,7 +47,8 @@ echo "running configure and make"
 
 printsfile="${path}/tmp.out"
 
-tout=($( time ((./configure --prefix ${installprefix} &>> $printsfile) && (make -j $cpu world &>> $printsfile ) && (make -j $cpu install &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
+./configure --prefix ${installprefix}
+tout=($( time ((make -j $cpu world &>> $printsfile ) && (make -j $cpu install &>> $printsfile)) 2>&1 )) # parens on outside turn output into an array.
 
 rt=${tout[1]} # real time
 ut=${tout[3]} # user time
@@ -81,7 +82,8 @@ do
 
     env TMPDIR="${path}/tmp"
 
-    tout=($( time ((./configure --prefix ${installprefix} &>> ${printsfile}) && (make -j $cpu world &>> ${printsfile}) && (make -j $cpu install &>> ${printsfile})) 2>&1 )) # parens on outside turn output into an array.
+    ./configure --prefix ${installprefix}
+    tout=($( time ((make -j 1 world &>> ${printsfile}) && (make -j 1 install &>> ${printsfile})) 2>&1 )) # parens on outside turn output into an array.
 
     rt=${tout[1]} # real time
     ut=${tout[3]} # user time
