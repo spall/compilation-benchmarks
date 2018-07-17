@@ -1,4 +1,4 @@
-#lang racket/base
+#lang errortrace racket/base
 
 (require racket/match
          racket/string
@@ -12,9 +12,9 @@
 (provide parse-rusage)
 
 (define SHELLCOUNT 0)
-(struct shcall (cmd n num-submakes duplicate?) #:mutable #:transparent)
-(define (create-shcall cmd n)
-  (shcall cmd n 0 #f))
+(struct shcall (cmd n num-submakes duplicate? stime) #:mutable #:transparent)
+(define (create-shcall cmd n stime)
+  (shcall cmd n 0 #f stime))
 
 (struct submake (cmd n count depth) #:mutable #:transparent)
 (define (create-submake cmd n)
@@ -44,6 +44,12 @@
        (cons (car edges) (driver (cdr edges) (- n 1)))]))
        
   (driver (target-out-edges t)  n_))	
+
+(define (read-full-non-empty-line fip)
+  (let loop ([ln (read-full-line fip)])
+    (if (equal? "" ln)
+        (loop (read-full-line fip))
+        ln)))
 
 (define (read-full-line fip)
   (let loop ()
@@ -75,7 +81,7 @@
 (define (elapsed? line cmd)
   (define words (string-split (string-trim line " " #:repeat? #t)))
   (cond
-    [(equal? (car words) "elapsed=")
+    [(equal? (car words) "end=")
      (define rds (create-rusage-data cmd))
      (set-rusage-data-elapsed! rds (string->number (cadr words)))
      rds]
@@ -162,8 +168,8 @@
       (define parent (cdadr ts-local))
 
       (if (cadr prqs?-local)
-          (add-dependency parent tid (car ttimes-local))
-          (add-recipe parent tid (car ttimes-local)))
+          (add-dependency parent tid t (car ttimes-local))
+          (add-recipe parent tid t (car ttimes-local)))
       
       (cond
         [(target-in-graph? mgraph tid)
@@ -211,11 +217,11 @@
                                  [overheads (cons (cons end (car overheads-local)) (cdr overheads-local))]))]
         [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
 	 ;; TODO: add overhead time to this somehow......
-	 (define stmp (cadr (car overheads-local)))	
-	 (define etmp (car (car overheads-local)))
+	 #;(define stmp (cadr (car overheads-local)))	
+	 #;(define etmp (car (car overheads-local)))
 
          (define parent (cdadr ts-local)) ;; should be <ROOT>
-         (add-recipe parent tid (cons (- etmp stmp) (car ttimes-local)))
+         (add-recipe parent tid t (car ttimes-local) #;(cons (- etmp stmp) (car ttimes-local)))
 
          (when (target-in-graph? mgraph tid)
            (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
@@ -227,7 +233,7 @@
                                  [prqs? (cdr prqs?-local)]
                                  [ttimes (cdr ttimes-local)]
                                  [dirs (cdr dirs-local)]
-                                 [overheads (cdr overheads-local)]))]
+                                 #;[overheads (cdr overheads-local)]))]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
@@ -273,10 +279,11 @@
            (define tmp (create-target tname))
            (set-target-mfile! tmp (mcdr ntarget-id))
            (add-target-to-makegraph mgraph ntarget-id tmp))
-         
+
+         (define tmp (get-target mgraph ntarget-id))
          (if (car prqs?-local)
-             (add-dependency t ntarget-id (list 0))
-             (add-recipe t ntarget-id (list 0)))
+             (add-dependency t ntarget-id tmp (list 0))
+             (add-recipe t ntarget-id tmp (list 0)))
 
          (read-file st)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
@@ -289,11 +296,12 @@
          (check-current-target tname t "invoking recipe")
          
          (read-file st)]
-        [`("executing" "shell-command:" ,n_ . ,cmd)
+        [`("executing" "shell-command:" ,n_ ";" "start=" ,stime . ,cmd)
+         ;; TODO: do something with stime
          (when (equal? (target-name t) "<ROOT>")
            (printf "Not considering a target and running cmd ~a\n" cmd))
          (define n (string->number n_))
-         (define nshcall (create-shcall (string-join cmd " ") n))
+         (define nshcall (create-shcall (string-join cmd " ") n (string->number stime)))
          (define nextline (read-full-line fip))
          ;; if next line is an executing sub-make then this is a duplicate.
          (match (string-split nextline)
@@ -383,85 +391,79 @@
         [`("argv=" . ,rest)
          (define cmd (string-join rest " "))
          (define timesline (read-full-line fip))
-         
-         (cond
-           [(elapsed? timesline cmd) =>
-            (lambda (info)
-              ;; read next line. should be a finished shell-command line
-              (define finishline (let loop ([ln (read-full-line fip)])
-                                   (if (equal? "" ln)
-                                       (loop (read-full-line fip))
-                                       ln)))
-              (match (string-split finishline)
-                [`("finished" "shell-command:" ,n_ . ,rest)
-                 (define n (string->number n_))
-                 ;; match n to shell command currently on top of stack.
-                 (when (empty? shcalls-local)
-                   (error 'parse-line "shcalls is empty"))
-                 (unless (= n (shcall-n (car shcalls-local)))
-                   (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
-                 ;; if this is a submake ...........
-                 (cond
-                   [(shcall-duplicate? (car shcalls-local)) ;; ignore it
-                    (when DEBUG
-                      (printf "ignoring cmd ~a\n" cmd))
-                    (read-file (struct-copy state st
-                                            [shcalls (cdr shcalls-local)]))]
-                   [(> (shcall-num-submakes (car shcalls-local)) 0) ;; launched at least 1 submake but
-                    ;; "not a duplicate"
-                    ;; still need to do some sort of math.....
-                    ;; can we just get last n nodes and do same thing as we did for submake...
-                    ;; TODO what do we do in this case?
-                    ;; possible cases
-                    ;; for i ...... make i
-                    ;; - just have a make for each call....
-                    ;; not clear this will ever happen, but
-                    ;(printf "Processing shell command with submakes that is not a duplicate ~a; ~a\n" n_ (string-join rest " "))
 
-                    (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls-local))))
-                    ;; add edges to fake target.
-                    ;; remove edges from current target.
-                    ;; create  new fake node.
-                    (define tmpname (symbol->string (gensym "FAKE")))
-                    (define tmp-FAKE-ID (mcons tmpname "top"))
-                    (define tmp-FAKE (create-target tmpname))
-                    (set-target-mfile! tmp-FAKE "top")
-                    ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
-                    
-                    (for ([last-edge last-edges])
-		      (remove-edge t last-edge 'out)
-                      (add-edge tmp-FAKE last-edge 'out 'dep))
-                    
-                    ;; add edge from current target to fake target.
-                    ;; should be a recipe
-                    (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID (list info))
 
-                    (read-file (struct-copy state st
-                                            [shcalls (cdr shcalls-local)]))]
-                   [else ;; if this is not a submake......
-                    (set! SHELLCOUNT (+ 1 SHELLCOUNT))
+         (match (string-split timesline)
+           [`("end=" ,etime_ "overhead=" ,otime_ "user=" ,ut "sys=" ,syst)
+            (define etime (string->number etime_))
+            (define otime (string->number otime_))
+            (define info (create-rusage-data cmd))
+            (set-rusage-data-user! info (string->number ut))
+            (set-rusage-data-system! info (string->number syst))
 
-                    (read-file (struct-copy state st
-                                            [ttimes (cons (cons info (car ttimes-local))
-                                                          (cdr ttimes-local))]
-                                            [shcalls (cdr shcalls-local)]))])]
-                [else
-                 (error 'parse-line "Got ~a instead of 'finished shell-command:' following ~a" finishline line)]))]
-           [else
-            (error 'parse-line "Got ~a following ~a instead of rusageinfo" timesline line)])]
+            ;; read next line. should be a finished shell-command line
+            (define finishline (read-full-non-empty-line fip))
+            (match (string-split finishline)
+              [`("finished" "shell-command:" ,n_ . ,rest)
+               (define n (string->number n_))
+               ;; match n to shell command currently on top of stack.
+               (when (empty? shcalls-local)
+                 (error 'parse-line "shcalls is empty"))
+               (unless (= n (shcall-n (car shcalls-local)))
+                 (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
 
+               (set-rusage-data-elapsed! info (- (- etime (shcall-stime (car shcalls-local))) otime))
+               
+               ;; if this is a submake ...........
+               (cond
+                 [(shcall-duplicate? (car shcalls-local)) ;; ignore it
+                  (when DEBUG
+                    (printf "ignoring cmd ~a\n" cmd))
+                  (read-file (struct-copy state st
+                                          [shcalls (cdr shcalls-local)]))]
+                 [(> (shcall-num-submakes (car shcalls-local)) 0)
+                  ;; launched at least 1 submake but "not a duplicate"
+                  
+                  (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls-local))))
+                  ;; add edges to fake target; remove edges from current target. ;; create  new fake node.
+                  (define tmpname (symbol->string (gensym "FAKE")))
+                  (define tmp-FAKE-ID (mcons tmpname "top"))
+                  (define tmp-FAKE (create-target tmpname))
+                  (set-target-mfile! tmp-FAKE "top")
+                  ;; add to graph
+                  (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
+                  
+                  (for ([last-edge last-edges])
+                    (remove-edge t last-edge 'out)
+                    (add-edge tmp-FAKE last-edge 'out 'dep))
+                  
+                  ;; add edge from current target to fake target.
+                  ;; should be a recipe
+                  (set-rusage-data-submake?! info #t)
+                  (add-recipe t tmp-FAKE-ID (list info))
+                  
+                  (read-file (struct-copy state st
+                                          [shcalls (cdr shcalls-local)]))]
+                 [else ;; if this is not a submake......
+                  (set! SHELLCOUNT (+ 1 SHELLCOUNT))
+                  
+                  (read-file (struct-copy state st
+                                          [ttimes (cons (cons info (car ttimes-local))
+                                                        (cdr ttimes-local))]
+                                          [shcalls (cdr shcalls-local)]))])]
+              [else
+               (error 'parse-line "Got ~a instead of 'finished shell-command:' following ~a" finishline line)]
+              
+              [else
+               (error 'parse-line "Got ~a instead of end time line" timesline line)])])]
+        
         ;; produced by submake script; may be a duplicate of another argv line produced by rusage script
         ;; may not be, depending on how submake was launched
         ;; will occur first if it is a duplicate.
         [`("submake-argv=" . ,rest)
          (define argv-cmd (string-join rest " "))
          (define timesline (read-full-line fip))
-         (define finishline (let loop ([ln (read-full-line fip)])
-                              (if (equal? "" ln)
-                                  (loop (read-full-line fip))
-                                  ln)))
+         (define finishline (read-full-non-empty-line fip))
          
          (cond
            [(elapsed? timesline argv-cmd) =>
@@ -469,8 +471,8 @@
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
                  ;; TODO: add overhead time to this somehow...
-		 (define stmp (cadr (car overheads-local)))	
-	 	 (define etmp (car (car overheads-local)))		
+		 #;(define stmp (cadr (car overheads-local)))	
+	 	 #;(define etmp (car (car overheads-local)))		
 
 		 (define n (string->number n_))
                  ;; should be at top of submake stack so check that n's match
@@ -512,19 +514,19 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID tmp-FAKE (list (- etmp stmp) info))]
+                    (add-recipe t tmp-FAKE-ID tmp-FAKE info #;(list (- etmp stmp) info))]
                    [else
                     ;; add info to an edge
                     (define last-edge (get-last-edge t))
                     (set-rusage-data-submake?! info #t)
-                    (set-edge-data! last-edge (cons (- etmp stmp) (cons info (edge-data last-edge))))])]
+                    (set-edge-data! last-edge (cons info (edge-data last-edge)) #;(cons (- etmp stmp) (cons info (edge-data last-edge))))])]
                 [else
                  (error 'parse-line "Expected finishing submake line, got ~a instead" finishline)])
 
               (read-file (struct-copy state st
                                       [dirs (cdr dirs-local)]
                                       [submakes (cdr submakes-local)]
-                                      [overheads (cdr overheads-local)])))]
+                                      #;[overheads (cdr overheads-local)])))]
            [else
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
