@@ -40,49 +40,26 @@
 
 (define (work root_ graph)
   (define visited (make-hash))
-  (define (driver root lbound ubound)
-    
-    (define-values (workdeps workrecipes leid_)
-      (for/fold ([dsum 0]
-    	       	 [wsum 0]
-	         [leid ubound])
-	        ([e (reverse (target-out-edges root))])
-        (cond
-       	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-          (when (hash-ref visited e #f)
-	    (error 'work "Visited edge ~a a 2nd time from <~a,~a>!" e (target-name root) (target-mfile root)))
-	  (hash-set! visited e #t)
+  (define (driver root)
+    (for/sum ([e (reverse (target-out-edges root))])
+      (define n (edge-end e))
 
-	  (define tmpwork (+ (sum-times (edge-data e))
-			   (driver (get-target graph (edge-end e))
-			   	   (edge-id e) leid)))
-	(when DEBUG
-             (when (> tmpwork 0)
-               (printf "For root dep ~a; work is ~a\n" (edge-end e) tmpwork)))
-        
-	(cond
-	 [(equal? 'dep (edge-type e))
-	  (values (+ dsum tmpwork)
-	  	  wsum
-		  (edge-id e))]
-	 [else
-	  (values dsum
-	  	  (+ wsum tmpwork)
-		  (edge-id e))])]
-       [else
-        (values dsum wsum leid)])))
+      (when (hash-ref visited n #f)
+        (error 'work "Visited node <~a,~a> a 2nd time from <~a,~a>!" (target-name n) (target-mfile n) (target-name root) (target-mfile root)))
 
-    (+ workdeps workrecipes))
+	(hash-set! visited n #t)
+	
+	(+ (sum-times (edge-data e))
+	   (driver n))))
 
+  (hash-set! visited root_ #t)
+  (define w (driver root_))
 
-  (define w (driver root_ (- (edge-id (car (target-out-edges root_))) 1) 1))
-
-  ;; Checking that we visited each edge once. If we did not; there is a problem.
+  ;; Checking that we visited each node once. If we did not; there is a problem.
   ;; this only works if we are checking entire graph.
-  (for ([t (in-hash-values (makegraph-targets graph))])
-    (for ([e (target-out-edges t)])
-      (unless (hash-ref visited e #f)
-        (error 'work "dep Never visited edge ~a; target is ~a during work calculation!" e t))))
+  (for ([t (in-hash-keys (makegraph-targets graph))])
+    (unless (hash-ref visited t #f)
+      (error 'work "dep Never visited node ~a!" t)))
   w)
     
 (define (sum-times ttimes)
@@ -106,49 +83,35 @@
 ;; Span(root) = longest time down deps path + sum of times of recipes paths
 (define (span root_ graph)
   (define visited (make-hash))
-  (define (driver root lbound ubound)
+  (define (driver root)
 
-    (define-values (spandeps workdeps leid_)
+    (define-values (spandeps workdeps)
       (for/fold ([max_ 0]
-      		 [sum 0]
-		 [leid ubound])
+      		 [sum 0])
 		([e (reverse (target-out-edges root))])
+	(define n (edge-end e))
+        (when (hash-ref visited n #f)
+	   (error 'span "Visited node ~a a 2nd time!" n))
+
+	(define tmpspan (+ (sum-times (edge-data e))
+	   	   	      (driver n)))
+
 	(cond
-	 [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-	  (when (hash-ref visited e #f)
-             (error 'span "Visited edge ~a a 2nd time!" e))
-           (hash-set! visited e #t)
-	   
-	   (define tmpspan (+ (sum-times (edge-data e))
-	   	   	      (driver (get-target graph (edge-end e))
-			      	      (edge-id e) leid)))
-	
-	   (cond
 	    [(equal? 'dep (edge-type e))
-	     (values (max max_ tmpspan)
-	     	     sum
-		     (edge-id e))]
+	     (values (max max_ tmpspan) sum)]
 	    [else
-	     (values max_
-	     	     (+ sum tmpspan)
-		     (edge-id e))])]
-	 [else
-	  (values max_ sum leid)])))
+	     (values max_ (+ sum tmpspan))])))
 
       (+ spandeps workdeps))
   
-  (define s (driver root_ (- (edge-id (car (target-out-edges root_))) 1) 1))
+  (hash-set! visited root_ #t)
+  (define s (driver root_))
 
-  ;; Checking that we visited each edge once. If we did not; there is a problem.
+  ;; Checking that we visited each node once. If we did not; there is a problem.
   ;; this only works if we are checking entire graph.
-  #;(for ([t (in-hash-values (makegraph-targets graph))])
-    (for ([e (target-deps t)])
-      (unless (hash-ref visited e #f)
-        (error 'span "Never visited edge ~a during span calculation!" e)))
-    (for ([e (target-recipes t)])
-      (unless (hash-ref visited e #f)
-        (error 'span "Never visited edge ~a during span calculation!" e))))
-  
+  #;(for ([t (in-hash-keys (makegraph-targets graph))])
+      (unless (hash-ref visited t #f)
+        (error 'span "Never visited node ~a during span calculation!" t)))  
   s)
 
 (define (longest-target root_ graph)
@@ -256,36 +219,24 @@
         (edge-id e)))))
 
 (define (verify-edge-times graph)
-  (define (driver root lbound ubound)
-    
-    (define-values (workdeps leid_)
-      (for/fold ([sum 0]
-                 [leid ubound])
-                ([e (reverse (target-out-edges root))])
-        ;; each edge has a list of data. Want to verify data that is a "submake" shell call.
-        (cond
-          [(and (> (edge-id e) lbound) (< (edge-id e) ubound))
-           (define t (driver (get-target graph (edge-end e))
-                             (edge-id e)
-                             leid))
-           (define sumtimes (sum-times (edge-data e)))
-           
-           
-           (for ([info (edge-data e)])
-             (when (and (rusage-data? info) (rusage-data-submake? info))
-               (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info)) 
-               (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
-                 (when (> diff 0)
-                   (printf "Difference is ~a\n" diff))
-                 (when (< diff 0)
-                   (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
-           (values (+ sum sumtimes t) (edge-id e))]
-          [else
-           (values sum leid)])))
+  (define (driver root)
+    (for/sum ([e (reverse (target-out-edges root))])
+      ;; each edge has a list of data. Want to verify data that is a "submake" shell call.
+      (define t (driver (edge-end e)))
+      (define sumtimes (sum-times (edge-data e)))
 
-    workdeps)
+      (for ([info (edge-data e)])
+        (when (and (rusage-data? info) (rusage-data-submake? info))
+          (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info)) 
+          (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
+            (when (> diff 0)
+              (printf "Difference is ~a\n" diff))
+              (when (< diff 0)
+                (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
+
+      (+ sumtimes t)))
   
-  (driver (makegraph-root graph) (- (edge-id (car (target-out-edges (makegraph-root graph)))) 1) 1))
+  (driver (makegraph-root graph)))
     
 ;; ------------------------ graphviz dot file --------------------------------
 
@@ -327,7 +278,7 @@
     (printf "Processing node <~a,~a,~a>\n" (target-name n) (target-mfile n) (target-id n))
     (printf "target-out-edges: ~a\n" (target-out-edges n))
     (for ([e (target-out-edges n)])
-      (let ([tmp (get-target graph (edge-end e))])
+      (let ([tmp (edge-end e)])
         (printf "Dependency edge between <~a,~a,~a> and <~a,~a,~a> with ID ~a\n\n"
                 (target-name n) (target-mfile n) (target-id n)
                 (target-name tmp) (target-mfile tmp) (target-id tmp) (edge-id e))))

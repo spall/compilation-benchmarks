@@ -1,4 +1,4 @@
-#lang racket/base
+#lang errortrace racket/base
 
 (require racket/match
          racket/string
@@ -125,7 +125,6 @@
 
 (define (parse-file fip)
   (define mgraph (create-makegraph))
-  (define root-id (mcons "<ROOT>" "top"))
   (define root (create-target "<ROOT>"))
   (set-makegraph-root! mgraph root)
 
@@ -137,17 +136,14 @@
     (define submakes-local (state-submakes st))
     (define shcalls-local (state-shcalls st))
     (define overheads-local (state-overheads st))
-    (define tid (caar ts-local)) ;; mutable pair <name,makefile>
-    ;; 2nd thing is makefile; which may be #f
-    (define t (cdar ts-local)) ;; (car ts) is a pair of <tid,target>
+    (define t (car ts-local)) 
 
     (define (process-finished-target)
       ;; mfile is going to be top of dirs.....
       (when (list? (car dirs-local))
         (error 'process-finished-target "Car of dirs is ~a is a list" dirs-local))
       
-      (set-mcdr! tid (car dirs-local)) ;; just a dir
-      (set-target-mfile! t (car dirs-local))
+      (set-target-mfile! t (car dirs-local)) ;; apparently not totally accurate....
 
       (unless (empty? submakes-local)
         (set-submake-depth! (car submakes-local) (- (submake-depth (car submakes-local)) 1))
@@ -159,30 +155,13 @@
       (when (empty? (cdr prqs?-local))
         (error 'parse-line "Expected at least one more prq? to be in stack"))
 
-      (define parent (cdadr ts-local))
+      (define parent (cadr ts-local))
 
       (if (cadr prqs?-local)
-          (add-dependency parent tid t (car ttimes-local))
-          (add-recipe parent tid t (car ttimes-local)))
+          (add-dependency parent t (car ttimes-local))
+          (add-recipe parent t (car ttimes-local)))
       
-      (cond
-        [(target-in-graph? mgraph tid)
-         (when DEBUG
-           (printf "Target is already in graph for ~a; going to consolidate them.\n" tid))
-         (define tmp (get-target mgraph tid))
-
-         ;; I think we want to combine edges; because processing a target is really
-         ;; us processing a build path... and if we "reprocess" a target, we've just
-         ;; processed another build path and we want to record that path in the graph
-         ;; with new edges.
-         (set-target-out-edges! tmp (append (target-out-edges t) (target-out-edges tmp)))
-         
-	 (set-target-in-edges! tmp (append (target-in-edges t) (target-in-edges tmp)))]
-        [else
-         ;; add target to graph
-         (when DEBUG
-           (printf "Finished processing ~a; adding to graph.\n" tid))
-         (add-target-to-makegraph mgraph tid t)]))
+      (add-target-to-makegraph mgraph t))
     
     (when (eof-object? line)
       (unless (equal? root t)
@@ -192,11 +171,10 @@
       (match (string-split line)
         [`("executing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
          (define tname (symbol->string (gensym "TOP")))
-         (define ntarget-id (mcons tname (car rest)))
          (define ntarget (create-target tname))
          (set-target-mfile! ntarget (car rest))
          (read-file (struct-copy state st
-                                 [ts (cons (cons ntarget-id ntarget) ts-local)]
+                                 [ts (cons ntarget ts-local)]
                                  [prqs? (cons #f prqs?-local)]
                                  [ttimes (cons '() ttimes-local)]
                                  [dirs (list (car rest))]))]
@@ -211,23 +189,26 @@
                                  [overheads (cons (cons end (car overheads-local)) (cdr overheads-local))]))]
         [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
 	 ;; TODO: add overhead time to this somehow......
-	 (define stmp (cadr (car overheads-local)))	
-	 (define etmp (car (car overheads-local)))
+	 (define stmp (if (empty? overheads-local)
+	 	      	  0
+			  (cadr (car overheads-local))))	
+	 (define etmp (if (empty? overheads-local)
+	 	      0
+		      (car (car overheads-local))))
 
-         (define parent (cdadr ts-local)) ;; should be <ROOT>
-         (add-recipe parent tid t (cons (- etmp stmp) (car ttimes-local)))
+         (define parent (cadr ts-local)) ;; should be <ROOT>
+         (add-recipe parent t (cons (- etmp stmp) (car ttimes-local)))
 
-         (when (target-in-graph? mgraph tid)
-           (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
-
-         (add-target-to-makegraph mgraph tid t)
+         (add-target-to-makegraph mgraph t)
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
                                  [prqs? (cdr prqs?-local)]
                                  [ttimes (cdr ttimes-local)]
                                  [dirs (cdr dirs-local)]
-                                 [overheads (cdr overheads-local)]))]
+                                 [overheads (if (empty? overheads-local)
+				 	        overheads-local
+						(cdr overheads-local))]))]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
@@ -264,19 +245,13 @@
          ;; make has decided this target doesnt need to be considered. so
          ;; add it with a time of 0
          
-         (define ntarget-id (mcons tname (car dirs-local)))
-         
-         ;; check if target already exists in graph
-         (unless (target-in-graph? mgraph ntarget-id) ;; create target and add to graph
-           (when DEBUG
-             (printf "Pruning target ~a; but does not already exist in graph; adding.\n" ntarget-id))
-           (define tmp (create-target tname))
-           (set-target-mfile! tmp (mcdr ntarget-id))
-           (add-target-to-makegraph mgraph ntarget-id tmp))
-         
+	 (define ntarget (create-target tname))
+	 (set-target-mfile! ntarget (car dirs-local))
+	 (add-target-to-makegraph mgraph ntarget)
+
          (if (car prqs?-local)
-             (add-dependency t ntarget-id (get-target mgraph ntarget-id) (list 0))
-             (add-recipe t ntarget-id (get-target mgraph ntarget-id) (list 0)))
+             (add-dependency t ntarget  (list 0))
+             (add-recipe t ntarget  (list 0)))
 
          (read-file st)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
@@ -366,10 +341,8 @@
                                  [prqs? (cons #f (cdr prqs?-local))]))]
         [`("Considering" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
-         #| considering a new target.  MIGHT need to create a new 
-         target structure.
-         |#
-         (define ntarget-id (mcons tname #f)) ;; haven't determined makefile yet.
+         ;; considering a new target.  MIGHT need to create a new target structure.
+        
          (define ntarget (create-target tname))
 
          ;; increase submake depth by 1
@@ -377,7 +350,7 @@
            (set-submake-depth! (car submakes-local) (+ 1 (submake-depth (car submakes-local)))))
 
          (read-file (struct-copy state st
-                                 [ts (cons (cons ntarget-id ntarget) ts-local)]
+                                 [ts (cons ntarget ts-local)]
                                  [prqs? (cons #t prqs?-local)]
                                  [ttimes (cons '() ttimes-local)]))]
         [`("argv=" . ,rest)
@@ -422,12 +395,10 @@
                     ;; add edges to fake target.
                     ;; remove edges from current target.
                     ;; create  new fake node.
-                    (define tmpname (symbol->string (gensym "FAKE")))
-                    (define tmp-FAKE-ID (mcons tmpname "top"))
-                    (define tmp-FAKE (create-target tmpname))
+                    (define tmp-FAKE (create-target (symbol->string (gensym "FAKE"))))
                     (set-target-mfile! tmp-FAKE "top")
                     ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
+                    (add-target-to-makegraph mgraph tmp-FAKE)
                     
                     (for ([last-edge last-edges])
 		      (remove-edge t last-edge 'out)
@@ -436,7 +407,7 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID (list info))
+                    (add-recipe t tmp-FAKE (list info))
 
                     (read-file (struct-copy state st
                                             [shcalls (cdr shcalls-local)]))]
@@ -469,8 +440,12 @@
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
                  ;; TODO: add overhead time to this somehow...
-		 (define stmp (cadr (car overheads-local)))	
-	 	 (define etmp (car (car overheads-local)))		
+		 (define stmp (if (empty? overheads-local)
+		 	      	  0
+				  (cadr (car overheads-local))))	
+	 	 (define etmp (if (empty? overheads-local)
+		 	      	  0
+				  (car (car overheads-local))))		
 
 		 (define n (string->number n_))
                  ;; should be at top of submake stack so check that n's match
@@ -498,12 +473,10 @@
                     (define last-edges (get-last-edges t count))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
-                    (define tmpname (symbol->string (gensym "FAKE")))
-                    (define tmp-FAKE-ID (mcons tmpname "top"))
-                    (define tmp-FAKE (create-target tmpname))
+                    (define tmp-FAKE (create-target (symbol->string (gensym "FAKE"))))
                     (set-target-mfile! tmp-FAKE "top")
                     ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKE-ID tmp-FAKE)
+                    (add-target-to-makegraph mgraph tmp-FAKE)
                     
                     (for ([last-edge last-edges])
 		      (remove-edge t last-edge 'out)
@@ -512,7 +485,7 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE-ID tmp-FAKE (list (- etmp stmp) info))]
+                    (add-recipe t tmp-FAKE (list (- etmp stmp) info))]
                    [else
                     ;; add info to an edge
                     (define last-edge (get-last-edge t))
@@ -524,7 +497,9 @@
               (read-file (struct-copy state st
                                       [dirs (cdr dirs-local)]
                                       [submakes (cdr submakes-local)]
-                                      [overheads (cdr overheads-local)])))]
+                                      [overheads (if (empty? overheads-local)
+				      		     overheads-local
+						     (cdr overheads-local))])))]
            [else
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
@@ -537,8 +512,8 @@
     (define line (read-full-line fip))
     (parse-line line st))
   
-  (read-file (state (list (cons root-id root)) (list #f) (list '()) #f '() '() '()))
-  (add-target-to-makegraph mgraph root-id root)
+  (read-file (state (list root) (list #f) (list '()) #f '() '() '()))
+  (add-target-to-makegraph mgraph root)
   mgraph)
       
 (define (parse-rusage file-path [debug? #f])
