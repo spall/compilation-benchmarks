@@ -211,8 +211,12 @@
                                  [overheads (cons (cons end (car overheads-local)) (cdr overheads-local))]))]
         [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
 	 ;; TODO: add overhead time to this somehow......
-	 (define stmp (cadr (car overheads-local)))	
-	 (define etmp (car (car overheads-local)))
+	 (define stmp (if (empty? overheads-local)
+	 	      	  0
+			  (cadr (car overheads-local))))	
+	 (define etmp (if (empty? overheads-local)
+	 	      	  0
+			  (car (car overheads-local))))
 
          (define parent (cdadr ts-local)) ;; should be <ROOT>
          (add-recipe parent tid t (cons (- etmp stmp) (car ttimes-local)))
@@ -227,7 +231,9 @@
                                  [prqs? (cdr prqs?-local)]
                                  [ttimes (cdr ttimes-local)]
                                  [dirs (cdr dirs-local)]
-                                 [overheads (cdr overheads-local)]))]
+                                 [overheads (if (empty? overheads-local)
+				 	    	overheads-local
+					    	(cdr overheads-local))]))]
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
@@ -469,8 +475,12 @@
               (match (string-split finishline)
                 [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
                  ;; TODO: add overhead time to this somehow...
-		 (define stmp (cadr (car overheads-local)))	
-	 	 (define etmp (car (car overheads-local)))		
+		 (define stmp (if (empty? overheads-local)
+		 	      	  0	  
+				  (cadr (car overheads-local))))	
+	 	 (define etmp (if (empty? overheads-local)
+		 	      	  0
+				  (car (car overheads-local))))		
 
 		 (define n (string->number n_))
                  ;; should be at top of submake stack so check that n's match
@@ -524,7 +534,9 @@
               (read-file (struct-copy state st
                                       [dirs (cdr dirs-local)]
                                       [submakes (cdr submakes-local)]
-                                      [overheads (cdr overheads-local)])))]
+                                      [overheads (if (empty? overheads-local)
+				      		     overheads-local
+						     (cdr overheads-local))])))]
            [else
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
