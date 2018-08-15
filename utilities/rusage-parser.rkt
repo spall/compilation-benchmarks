@@ -162,8 +162,8 @@
       (define parent (cdadr ts-local))
 
       (if (cadr prqs?-local)
-          (add-dependency parent tid (car ttimes-local))
-          (add-recipe parent tid (car ttimes-local)))
+          (add-dependency parent tid t (car ttimes-local))
+          (add-recipe parent tid t (car ttimes-local)))
       
       (cond
         [(target-in-graph? mgraph tid)
@@ -215,7 +215,7 @@
 	 (define etmp (car (car overheads-local)))
 
          (define parent (cdadr ts-local)) ;; should be <ROOT>
-         (add-recipe parent tid (cons (- etmp stmp) (car ttimes-local)))
+         (add-recipe parent tid t (cons (- etmp stmp) (car ttimes-local)))
 
          (when (target-in-graph? mgraph tid)
            (error 'parse-file "Target <~a,~a> already in graph" (target-name t) (target-mfile t)))
@@ -275,8 +275,8 @@
            (add-target-to-makegraph mgraph ntarget-id tmp))
          
          (if (car prqs?-local)
-             (add-dependency t ntarget-id (list 0))
-             (add-recipe t ntarget-id (list 0)))
+             (add-dependency t ntarget-id (get-target mgraph ntarget-id) (list 0))
+             (add-recipe t ntarget-id (get-target mgraph ntarget-id) (list 0)))
 
          (read-file st)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
