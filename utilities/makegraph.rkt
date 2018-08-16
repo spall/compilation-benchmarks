@@ -21,8 +21,7 @@
          remove-edge
          all-fields-set?
          add-target-to-makegraph
-         target-in-graph?
-         get-target)
+         target-in-graph?)
 
 (define EDGE 0) ;; edge counter. to create ordering on edges
 (define (get-edge-id)
@@ -129,14 +128,14 @@
       (set-target-in-edges! t (insert-edge e (target-in-edges t)))))
 
 ;; adds a recipe edge
-(define (add-recipe t recipe recipe-t info)
-  (define tmp (edge recipe info 'seq (get-edge-id)))
+(define (add-recipe t recipe-t info)
+  (define tmp (edge recipe-t info 'seq (get-edge-id)))
   (set-target-in-edges! recipe-t (cons tmp (target-in-edges recipe-t)))
   (set-target-out-edges! t (cons tmp (target-out-edges t))))
 
 ;; adds a dependency edge
-(define (add-dependency t dep dep-t info)
-  (define tmp (edge dep info 'dep (get-edge-id)))
+(define (add-dependency t dep-t info)
+  (define tmp (edge dep-t info 'dep (get-edge-id)))
   (set-target-in-edges! dep-t (cons tmp (target-in-edges dep-t)))
   (set-target-out-edges! t (cons tmp (target-out-edges t))))
 
@@ -166,17 +165,12 @@
 (define (create-makegraph)
   (makegraph (make-hash) #f))
 
-(define (add-target-to-makegraph graph tid t)
-  (hash-set! (makegraph-targets graph) tid t))
+(define (add-target-to-makegraph graph t)
+  (hash-set! (makegraph-targets graph) t #t))
 
-(define (target-in-graph? graph tid)
-  (if (hash-ref (makegraph-targets graph) tid #f)
-      #t
-      #f))
-
-(define (get-target graph tid)
-  (hash-ref (makegraph-targets graph) tid #f))
-
+(define (target-in-graph? graph t)
+  (hash-ref (makegraph-targets graph) t #f))
+ 
 ;; -------------- end make graph code --------------------------
 
 ;; -------------- structure to represent rusage data -----------
