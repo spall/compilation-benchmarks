@@ -1,10 +1,9 @@
-#lang racket/base
+#lang errortrace racket
 
 (require racket/cmdline
          racket/list
-         ;"make2graph.rkt"
          "rusage-parser.rkt"
-         ;"parse-deps.rkt"  ;; change name of this file?
+         "strace-parser.rkt"
          "makegraphfunctions.rkt"
          "makegraph.rkt")
 
@@ -18,6 +17,7 @@
 (define span? (make-parameter #f))
 (define pspeed? (make-parameter #f))
 (define slackness? (make-parameter #f))
+(define strace? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -43,6 +43,9 @@
    [("-m" "--modules-graph")
     "Build graph of racket modules build during build"
     (racket? #t)]
+   [("--strace-data") stfile
+    "Parse strace data and connect with build graph"
+    (strace? stfile)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -92,39 +95,17 @@
        (printf "~a, ~a, ~a, ~a, ~a, ~a\n" tc upred lpred uleaf lleaf plspeed)))
    
    (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ wsum len)))]
-   
   [else
    (define graph
      (cond
        [(rusage?)
         (parse-rusage file-path)]
-       [(nd?)
-        (void)
-        #;(parse-dry-run file-path)]
        [else
-        (error 'driver "Expected either '--rusage-data' or '--dry-run-output' flags")]))
+        (error 'driver "Expected '--rusage-data' flag")]))
    
-   ;(printf "going to verify graph edges\n")
-   ;(verify-edges graph)
-   ;(printf "Going to verify times in graph\n")
-   ;(verify-edge-times graph)
-     
-   (define (parse-ts fp)
-     (void))
-   (define (build-module-graph a1 a2)
-     (void))
-   (define (populate-with-timing-info a1 a2)
-     (void))
-   
-   (define rgraph
-     (cond
-       [(racket?)
-        (let-values ([(tinfo cpaths ppaths) (parse-ts file-path)])
-          (let ([g (build-module-graph cpaths ppaths)])
-            (populate-with-timing-info g tinfo)
-            g))]
-       [else
-        #f]))
+   (when (strace?)
+     (printf "Parsing strace\n")
+     (parse-strace (strace?)))
    
    (when (work?)
      (define w (work (makegraph-root graph) graph))
