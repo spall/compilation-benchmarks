@@ -11,19 +11,6 @@ int main(int argc, char **argv) {
   const char* outputfile = getenv_ec("OUTPUTFILE");
   const char* curscnum = getenv_ec("CURSCNUM");
   unsetenv("CURSCNUM");
-
-  /*
-  // remove curscnum from envp
-  int i;
-  int j = 0;
-  for(i = 0; envp[i] != 0; ++i) {
-    if (0 != strncmp(envp[i], "CURSCNUM", 8)) {
-      envp[j] = envp[i];
-      j = j +1;
-    }
-  }
-  envp[j] = 0;
-  */
  
   int old = atoi(curscnum);
   
@@ -136,7 +123,7 @@ int main(int argc, char **argv) {
     }
     fprintf(tmp, "\n");
     
-    fprintf(tmp, "elapsed= %lld.%.9ld\n finishing sub-make: %d : ", (long long)tt->tv_sec, tt->tv_nsec, old);
+    fprintf(tmp, "elapsed= %lld.%.9ld\n [%d] finishing sub-make: %d : ", (long long)tt->tv_sec, tt->tv_nsec, pid, old);
 
     for(a = 1; a < argc; a ++) {
       fprintf(tmp, "%s ", argv[a]);

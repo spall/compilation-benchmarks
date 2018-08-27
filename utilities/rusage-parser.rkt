@@ -366,13 +366,15 @@
                                        (loop (read-full-line fip))
                                        ln)))
               (match (string-split finishline)
-                [`("finished" "shell-command:" ,n_ . ,rest)
+                [`(,pid_ "finished" "shell-command:" ,n_ . ,rest)
                  (define n (string->number n_))
                  ;; match n to shell command currently on top of stack.
                  (when (empty? shcalls-local)
                    (error 'parse-line "shcalls is empty"))
                  (unless (= n (shcall-n (car shcalls-local)))
                    (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
+                 (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
+                 (set-rusage-data-pid! info pid)
                  ;; if this is a submake ...........
                  (cond
                    [(shcall-duplicate? (car shcalls-local)) ;; ignore it
@@ -438,7 +440,7 @@
            [(elapsed? timesline argv-cmd) =>
             (lambda (info)
               (match (string-split finishline)
-                [`("finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
+                [`(,pid_ "finishing" "sub-make:" ,n_ ":" ,cmd ... ";" "in" "directory" . ,rest)
                  ;; TODO: add overhead time to this somehow...
 		 (define stmp (if (empty? overheads-local)
 		 	      	  0	  
@@ -455,6 +457,8 @@
                    (error 'parse-line "Expected submake with n of ~a to be on top of stack, not ~a" n (submake-n (car submakes-local))))
                  (unless (= 0 (submake-depth (car submakes-local)))
                    (error 'parse-line "~a depth is ~a not zero" argv-cmd (submake-depth (car submakes-local))))
+                 (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
+                 (set-rusage-data-pid! info pid)
                  (define cdir (car rest))
                  (when DEBUG
                    (printf "current directory is ~a\n" cdir))

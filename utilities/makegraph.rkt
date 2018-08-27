@@ -180,7 +180,7 @@
   (write-string "todo" port)
   (when mode (write-string ">" port)))
 
-(struct rusage-data (cmd rc elapsed user system maxrss
+(struct rusage-data (pid cmd rc elapsed user system maxrss
                          avgrss ins outs minflt majflt
                          swaps avgmem avgdata submake?)
   #:methods gen:custom-write
@@ -188,7 +188,7 @@
   #:mutable #:transparent)
 
 (define (create-rusage-data cmd)
-  (rusage-data cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
+  (rusage-data #f cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
 
 (define (all-fields-set? rds)
   (andmap identity
