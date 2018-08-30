@@ -4,7 +4,8 @@
          racket/string
          racket/match
          "makegraph.rkt"
-         "flags.rkt")
+         "flags.rkt"
+         "process-syscalls.rkt")
 
 (provide get-targets
 	 get-last-edge
@@ -17,10 +18,10 @@
          predicted-speed-upper
          predicted-speed-lower
 	 predicted-speed-perfect-linear
-         verify-edge-times
          verify-edges
 	 longest-leaf         
-         print-graph)
+         print-graph
+         check-dependencies)
 
 (define (get-last-edge t)
   (cond
@@ -38,20 +39,81 @@
         (cons val tgs)
         tgs)))
 
+;; TODO: what about transitive dependencies?
+;; TODO: also want to check if recipe 2 depends on something recipe 1 produced etc.
+
+;; What does this function do?
+;; for each target
+;; checks how much the outs of its dependencies overlap with the ins of its recipes
+;; How do we calculate the ins and outs of a target?
+;; If the target is a leaf target
+;;   ins = all of the ins of the target's recipes; which are stored in target
+;;   outs = all of the outs of the target's recipes; which are stored in target
+
+;; If the target is NOT a leaf target
+;;   ins = all of the ins of recipes that are NOT submakes
+;;       + ins of submake recipes
+;;   outs = all of the outs of recipes that are NOT submakes
+;;        + outs of submake recipes
+(define (check-dependencies root_ graph syscalls)
+  (define visited (make-hash))
+
+  ;; calculates the ins and outs of a target
+  (define (driver root)
+    (define-values (ins outs) ;; ins of recipes that are not submakes
+      (for/fold ([in '()]     ;; outs of recipes that are not submakes
+                 [out '()])
+                ([info (target-data root)])
+        (define-values (i o) (process-in-out-pid (rusage-data-pid info)))
+        (values (append i in) (append o out))))
+
+    (define-values (ins2 outs2 douts)
+      (for/fold ([in '()]
+                 [out '()]
+                 [dout '()])
+                ([e (reverse (target-out-edges root))])
+        (define n (edge-end e))
+        
+        (when (hash-ref visited n #f)
+          (error 'check-dependencies "visited node <~a,~a> a 2nd time\n" (target-name n)
+                 (target-mfile n)))
+        (hash-set! visited n #t)
+
+        (define-values (nins nouts) (driver n))
+
+        (cond
+          [(equal? (edge-type e) 'dep) ;; dependency so we care about what it is writing
+           (values in out (cons (cons (edge-id e) (list nouts)) dout))]
+          [else
+           (values (append nins in) (append nouts out) dout)])))
+
+    (define all-ins (append ins ins2))
+
+    (for ([p douts])
+      (define id (car p))
+      (define used#
+        (for/sum ([o (cdr p)])
+          (if (member o all-ins)
+              1
+              0)))
+      (printf "Dependency from edge ~a used ~a times\n" id used#))
+    
+    (values all-ins (append outs outs2)))
+
+  (driver root_))
+
 (define (work root_ graph)
   (define visited (make-hash))
   (define (driver root)
-    (for/sum ([e (reverse (target-out-edges root))])
-      (define n (edge-end e))
-
-      (when (hash-ref visited n #f)
-        (error 'work "Visited node <~a,~a> a 2nd time from <~a,~a>!" (target-name n) (target-mfile n) (target-name root) (target-mfile root)))
-
-	(hash-set! visited n #t)
-	
-	(+ (sum-times (edge-data e))
-	   (driver n))))
-
+    (+ (sum-times (target-data root))
+       (for/sum ([e (reverse (target-out-edges root))])
+         (define n (edge-end e))
+         
+         (when (hash-ref visited n #f)
+           (error 'work "Visited node <~a,~a> a 2nd time from <~a,~a>!" (target-name n) (target-mfile n) (target-name root) (target-mfile root)))
+         
+         (hash-set! visited n #t)
+         (driver n))))
   (hash-set! visited root_ #t)
   (define w (driver root_))
 
@@ -84,26 +146,24 @@
 (define (span root_ graph)
   (define visited (make-hash))
   (define (driver root)
-
-    (define-values (spandeps workdeps)
+    (define-values (sd wd)
       (for/fold ([max_ 0]
-      		 [sum 0])
-		([e (reverse (target-out-edges root))])
-	(define n (edge-end e))
+                 [sum (sum-times (target-data root))])
+                ([e (reverse (target-out-edges root))])
+        (define n (edge-end e))
         (when (hash-ref visited n #f)
-	   (error 'span "Visited node ~a a 2nd time!" n))
+          (error 'span "Visited node ~a a 2nd time!" n))
 
-	(define tmpspan (+ (sum-times (edge-data e))
-	   	   	      (driver n)))
+        (define tmpspan (driver n))
 
-	(cond
-	    [(equal? 'dep (edge-type e))
-	     (values (max max_ tmpspan) sum)]
-	    [else
-	     (values max_ (+ sum tmpspan))])))
+        (cond
+          [(equal? 'dep (edge-type e))
+           (values (max max_ tmpspan) sum)]
+          [else
+           (values max_ (+ sum tmpspan))])))
 
-      (+ spandeps workdeps))
-  
+    (+ sd wd))
+
   (hash-set! visited root_ #t)
   (define s (driver root_))
 
@@ -118,30 +178,19 @@
   (void)) ;; todo
 
 (define (longest-leaf graph)
-  
   (define-values (target_ time_)
     (for/fold ([maxt #f]
-  	     [max   0])
-  	    ([t (in-hash-values (makegraph-targets graph))])
-    ;; test if target is a leaf
+               [max 0])
+              ([t (in-hash-values (makegraph-targets graph))])
+      ;; test if target is a leaf
       (cond
-        [(empty? (target-out-edges t))
-         ;; is a leaf
-	 ;; TODO: Now add up times on edge into it. 
-	 (define total
-	   (for/fold ([max 0])
-	   	    ([e (target-in-edges t)])
-	      (define tmp (sum-times (edge-data e)))
-	      (if (> tmp max)
-	      	 tmp
-	 	 max)))
-	
-	 (if (> total max)
-	     (values t total)
-	     (values maxt max))]
-	[else
-	 (values maxt max)])))
-
+        [(empty? (target-out-edges t)) ;; leaf
+         (define tmp (sum-times (target-data t)))
+         (if (> tmp max)
+             tmp
+             max)]
+        [else
+         (values maxt max)])))
   time_)
 
 (define (longest-recipe root_ graph)
@@ -217,26 +266,6 @@
         (when (< (edge-id e) last)
           (printf "edge id ~a is less than last edge id ~a\n" (edge-id e) last))
         (edge-id e)))))
-
-(define (verify-edge-times graph)
-  (define (driver root)
-    (for/sum ([e (reverse (target-out-edges root))])
-      ;; each edge has a list of data. Want to verify data that is a "submake" shell call.
-      (define t (driver (edge-end e)))
-      (define sumtimes (sum-times (edge-data e)))
-
-      (for ([info (edge-data e)])
-        (when (and (rusage-data? info) (rusage-data-submake? info))
-          (printf "Going to verify time for ~a\n\n" (rusage-data-cmd info)) 
-          (let ([diff (- (rusage-data-elapsed info) (+ t sumtimes))])
-            (when (> diff 0)
-              (printf "Difference is ~a\n" diff))
-              (when (< diff 0)
-                (printf "LESS THAN ZERO; difference is ~a\n" diff)))))
-
-      (+ sumtimes t)))
-  
-  (driver (makegraph-root graph)))
     
 ;; ------------------------ graphviz dot file --------------------------------
 

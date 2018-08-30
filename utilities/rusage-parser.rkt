@@ -157,9 +157,12 @@
 
       (define parent (cadr ts-local))
 
+      ;; add info to target.
+      (set-target-data! t (car ttimes-local))
+      
       (if (cadr prqs?-local)
-          (add-dependency parent t (car ttimes-local))
-          (add-recipe parent t (car ttimes-local)))
+          (add-dependency parent t)
+          (add-recipe parent t))
       
       (add-target-to-makegraph mgraph t))
     
@@ -197,7 +200,10 @@
 			  (car (car overheads-local))))
 
          (define parent (cadr ts-local)) ;; should be <ROOT>
-         (add-recipe parent t (cons (- etmp stmp) (car ttimes-local)))
+
+         (set-target-data! t (cons (- etmp stmp) (car ttimes-local)))
+         
+         (add-recipe parent t)
 
          (add-target-to-makegraph mgraph t)
 
@@ -249,9 +255,12 @@
 	 (set-target-mfile! ntarget (car dirs-local))
 	 (add-target-to-makegraph mgraph ntarget)
 
+         ;; add data to target
+         (set-target-data! ntarget (list 0))
+         
          (if (car prqs?-local)
-             (add-dependency t ntarget  (list 0))
-             (add-recipe t ntarget  (list 0)))
+             (add-dependency t ntarget)
+             (add-recipe t ntarget))
 
          (read-file st)]
         [`("Must" "remake" "target" ,target . ,rest) ;; not sure if we care about this line...
@@ -409,7 +418,9 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE (list info))
+                    (set-target-data! tmp-FAKE (list info))
+                    
+                    (add-recipe t tmp-FAKE)
 
                     (read-file (struct-copy state st
                                             [shcalls (cdr shcalls-local)]))]
@@ -489,12 +500,13 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (add-recipe t tmp-FAKE (list (- etmp stmp) info))]
+                    (set-target-data! tmp-FAKE (list (- etmp stmp) info))
+                    
+                    (add-recipe t tmp-FAKE)]
                    [else
-                    ;; add info to an edge
-                    (define last-edge (get-last-edge t))
                     (set-rusage-data-submake?! info #t)
-                    (set-edge-data! last-edge (cons (- etmp stmp) (cons info (edge-data last-edge))))])]
+                    ;; is the following line correct?
+                    (set-target-data! t (cons (- etmp stmp) (cons info (target-data t))))])]
                 [else
                  (error 'parse-line "Expected finishing submake line, got ~a instead" finishline)])
 
