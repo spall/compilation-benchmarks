@@ -57,7 +57,7 @@
   (when mode (write-string ">" port)))
 
 ;; out edges are recipes and deps; in-edges are edges where this target is the end.
-(struct target (id name mfile out-edges in-edges)
+(struct target (id name mfile out-edges in-edges data)
   #:methods gen:custom-write
   [(define write-proc target-print)]
   #:mutable #:transparent)
@@ -73,14 +73,9 @@
   (write-string "\n" port)
   (write-string "End: " port)
   (recur (edge-end e) port)
-  (write-string "\n" port)
-  (write-string "Data:\n" port)
-  (for ([d (edge-data e)])
-    (recur d port)
-    (write-string "\n" port))
   (when mode (write-string ">" port)))
 
-(struct edge (end data type id) ;; end is name?
+(struct edge (end type id) ;; end is name?
   #:methods gen:custom-write
   [(define write-proc edge-print)]
   #:mutable #:transparent)
@@ -93,7 +88,8 @@
           name
           #f  ; mfile
           '() ; out-edges
-          '())) ; in-edges
+          '() ; in-edge
+          '())) ; data
 
 (define (insert-edge e ls)
   (cond
@@ -128,14 +124,14 @@
       (set-target-in-edges! t (insert-edge e (target-in-edges t)))))
 
 ;; adds a recipe edge
-(define (add-recipe t recipe-t info)
-  (define tmp (edge recipe-t info 'seq (get-edge-id)))
+(define (add-recipe t recipe-t)
+  (define tmp (edge recipe-t 'seq (get-edge-id)))
   (set-target-in-edges! recipe-t (cons tmp (target-in-edges recipe-t)))
   (set-target-out-edges! t (cons tmp (target-out-edges t))))
 
 ;; adds a dependency edge
-(define (add-dependency t dep-t info)
-  (define tmp (edge dep-t info 'dep (get-edge-id)))
+(define (add-dependency t dep-t)
+  (define tmp (edge dep-t 'dep (get-edge-id)))
   (set-target-in-edges! dep-t (cons tmp (target-in-edges dep-t)))
   (set-target-out-edges! t (cons tmp (target-out-edges t))))
 

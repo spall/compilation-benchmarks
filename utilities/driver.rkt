@@ -4,6 +4,7 @@
          racket/list
          "rusage-parser.rkt"
          "strace-parser.rkt"
+         "process-syscalls.rkt"
          "makegraphfunctions.rkt"
          "makegraph.rkt")
 
@@ -18,6 +19,7 @@
 (define pspeed? (make-parameter #f))
 (define slackness? (make-parameter #f))
 (define strace? (make-parameter #f))
+(define check-deps? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -46,6 +48,9 @@
    [("--strace-data") stfile
     "Parse strace data and connect with build graph"
     (strace? stfile)]
+   [("--check-dep")
+    "Checks dependencies using strace data"
+    (check-deps? #t)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -103,9 +108,9 @@
        [else
         (error 'driver "Expected '--rusage-data' flag")]))
    
-   (when (strace?)
-     (printf "Parsing strace\n")
-     (parse-strace (strace?)))
+   (define syscall-info (when (strace?)
+                          (printf "Parsing strace\n")
+                          (parse-strace (strace?))))
    
    (when (work?)
      (define w (work (makegraph-root graph) graph))
@@ -114,6 +119,12 @@
    (when (span?)
      (define s (span (makegraph-root graph) graph))
      (printf "span is ~a\n" s))
+
+   (when (check-deps?)
+     (when (void? syscall-info)
+       (error 'driver "No system call info"))
+     (define scalls (process-syscalls syscall-info))
+     (check-dependencies (makegraph-root graph) graph scalls))
    
    (when (and (span?) (work?))
      (define parallelism (/ (work (makegraph-root graph) graph)
