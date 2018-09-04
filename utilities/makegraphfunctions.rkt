@@ -64,7 +64,9 @@
       (for/fold ([in '()]     ;; outs of recipes that are not submakes
                  [out '()])
                 ([info (target-data root)])
-        (define-values (i o) (process-in-out-pid (rusage-data-pid info)))
+        (define-values (i o) (if (rusage-data? info)
+		       	     	 (process-in-out-pid (rusage-data-pid info) syscalls)
+				 (values '() '())))
         (values (append i in) (append o out))))
 
     (define-values (ins2 outs2 douts)
@@ -83,20 +85,23 @@
 
         (cond
           [(equal? (edge-type e) 'dep) ;; dependency so we care about what it is writing
-           (values in out (cons (cons (edge-id e) (list nouts)) dout))]
+           (values in out (cons (cons e (list nouts)) dout))]
           [else
            (values (append nins in) (append nouts out) dout)])))
 
     (define all-ins (append ins ins2))
 
     (for ([p douts])
-      (define id (car p))
-      (define used#
-        (for/sum ([o (cdr p)])
-          (if (member o all-ins)
-              1
-              0)))
-      (printf "Dependency from edge ~a used ~a times\n" id used#))
+      (define outs (cadr p))
+      (unless (empty? outs) 
+        (define used#
+          (for/sum ([o outs])
+            (if (member o all-ins)
+                1
+                0)))
+        (printf "<~a,~a>'s dependency <~a,~a> used ~a times\n" (target-name root) (target-mfile root) 
+			   	      	      	      	       (target-name (edge-end (car p)))
+      	      		       	    	       	       	       (target-mfile (edge-end (car p))) used#)))
     
     (values all-ins (append outs outs2)))
 

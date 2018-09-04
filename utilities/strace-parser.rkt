@@ -72,11 +72,15 @@
                     (args <- $args)
                     (retval <- $retval)
                     (return (syscall (list->string scall) args retval))))
-                    
+            
+(define $nomatch (parser-compose
+		  (manyUntil $anyChar (<any> (try $eol) (lookAhead $eof)))
+		  (return null)))
+       
 (define $line
   (<or> (try $finalline)
-        $scallline
-        (return null)))
+        (try $scallline)
+        $nomatch))
 
 (define (parse-file f)
   (parse-result (manyUntil $line $eof) f))
@@ -91,19 +95,16 @@
     (unless ext
       (error 'parse-strace "~a does not have an extension" f))
     (define pid (string->number (bytes->string/locale ext #f 1)))
-    ;(printf "parsing file ~a\n" f)
+    (printf "parsing file ~a\n" f)
     (define syscalls (filter syscall? (parse-file f)))
+    (when (empty? syscalls)
+     (printf "no syscalls\n"))
 
     (when (hash-has-key? scalls pid)
       (error 'parse-strace "Already have processed syscalls for pid ~a" pid))
     
     (hash-set! scalls pid syscalls))
-
-  (for ([key (in-hash-keys scalls)])
-    (define-values (in out)
-      (process-syscalls-pid key scalls))
-    (printf "For pid ~a, inputs are ~a\n outputs are ~a\n" key in out)))
-
+  scalls)
     
     
     

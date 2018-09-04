@@ -123,8 +123,7 @@
    (when (check-deps?)
      (when (void? syscall-info)
        (error 'driver "No system call info"))
-     (define scalls (process-syscalls syscall-info))
-     (check-dependencies (makegraph-root graph) graph scalls))
+     (check-dependencies (makegraph-root graph) graph syscall-info))
    
    (when (and (span?) (work?))
      (define parallelism (/ (work (makegraph-root graph) graph)

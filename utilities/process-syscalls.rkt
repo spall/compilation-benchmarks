@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 
 (provide process-syscalls-pid
          process-in-out-pid
@@ -44,8 +44,13 @@
 (define (process-syscalls syscalls)
   (define processed (make-hash))
   (for ([(pid scalls) (in-hash syscalls)])
-    (hash-set! processed pid (process-syscalls-pid pid scalls)))
-  make-hash)
+    (hash-set! processed pid (for/fold ([ls '()])
+    	       		     	       ([scall scalls])
+			       (define res (parse-syscall scall))
+			       (if (or (equal? res #f) (void? res))
+			       	   ls
+				   (cons res ls)))))
+  processed)
 
 ;; accepts a list of sc-* structures
 ;; determines what the inputs/outputs are.
