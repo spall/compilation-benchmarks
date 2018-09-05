@@ -67,7 +67,13 @@
         (define-values (i o) (if (rusage-data? info)
 		       	     	 (process-in-out-pid (rusage-data-pid info) syscalls)
 				 (values '() '())))
-        (values (append i in) (append o out))))
+		
+        (values (if (member i in)
+		    in
+		    (append i in)) 
+		(if (member o out)
+		    out
+		    (append o out)))))
 
     (define-values (ins2 outs2 douts)
       (for/fold ([in '()]
@@ -82,14 +88,30 @@
         (hash-set! visited n #t)
 
         (define-values (nins nouts) (driver n))
-
+	
         (cond
           [(equal? (edge-type e) 'dep) ;; dependency so we care about what it is writing
            (values in out (cons (cons e (list nouts)) dout))]
           [else
            (values (append nins in) (append nouts out) dout)])))
 
-    (define all-ins (append ins ins2))
+    (define all-ins (let loop ([ls (append ins ins2)])
+    	    	      (cond
+		       [(empty? ls)
+		        '()]
+		       [(member (car ls) (cdr ls))
+		        (loop (cdr ls))]
+		       [else
+		        (cons (car ls) (loop (cdr ls)))])))
+
+    (define all-outs (let loop ([ls (append outs outs2)])
+    	    	      (cond
+		       [(empty? ls)
+		        '()]
+		       [(member (car ls) (cdr ls))
+		        (loop (cdr ls))]
+		       [else
+		        (cons (car ls) (loop (cdr ls)))])))
 
     (for ([p douts])
       (define outs (cadr p))
@@ -97,13 +119,12 @@
         (define used#
           (for/sum ([o outs])
             (if (member o all-ins)
-                1
+		  1
                 0)))
         (printf "<~a,~a>'s dependency <~a,~a> used ~a times\n" (target-name root) (target-mfile root) 
 			   	      	      	      	       (target-name (edge-end (car p)))
       	      		       	    	       	       	       (target-mfile (edge-end (car p))) used#)))
-    
-    (values all-ins (append outs outs2)))
+    (values all-ins all-outs))
 
   (driver root_))
 

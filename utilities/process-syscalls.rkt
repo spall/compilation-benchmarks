@@ -10,6 +10,7 @@
 
 (struct syscall (name args retval))
 (struct sc-open (file read? write? retval))
+(struct sc-execve (file))
 
 (define (parse-flags bops)
   (match bops
@@ -24,10 +25,29 @@
    (match args
    [(expr:begin _ (expr:string __ str w?) right)
     (values str (parse-flags right))]
-   [(expr:begin _ left right)
+   [(expr:begin _ left right) ;; right is mode which we do not care about
     (parse-open-args left)]
    [else
     (error 'parse-open-args "Did not match ~a" args)]))
+
+(define (parse-openat-args args)
+  (match args
+   [(expr:begin _ (expr:int __ val q) (expr:string src str w?))
+    (values val str '())]
+   [(expr:begin _ (expr:ref __ (id:var src name)) (expr:string src str w?))
+    (values name str '())]
+   [(expr:begin _ left right)
+    (if (expr:int? right) ;; right is mode which we do not care about
+    	(parse-openat-args left)
+	(call-with-values (lambda () (parse-openat-args left))
+			  (lambda (a b c)
+			    (values a b (parse-flags right)))))]
+   [else
+    (error 'parse-openat-args "Did not match ~a" args)]))
+
+#;(define (parse-execve-args args)
+  (match args
+   [(expr:begin _ (expr:begin __ (expr:string a str w?) ))]))
 
 (define (parse-syscall scall)
   (match (syscall-name scall)
@@ -57,9 +77,20 @@
 	      (values read? write?)])))
 
        (sc-open fname read? write? (string->number (syscall-retval scall))))]
-    ;["openat" ]
-    ;["write" ]
-    ;["read" ]
+    #;["openat"
+     (unless (string-prefix? (syscall-retval scall) "-1")
+       (define expr (parse-expression (open-input-string (syscall-args scall))))
+       (define-values (dirfd fname flags)
+         (parse-openat-args expr))
+
+       ;; TODO: Not sure how to do general case
+       
+     )]
+    ["execve" 
+     (unless (string-prefix? (syscall-retval scall) "-1")
+       ;; c parser doesn't seem compatible with this
+       (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+       (sc-execve "fname"))]
     ;[]
     ;[]
     ;;...
@@ -102,12 +133,16 @@
             ([call calls])
     (match call
       [(sc-open f r? w? r)
-       (values (if r?
+       (values (if (and r? (not (member f in)))
        	           (cons f in)
 		   in)
-	       (if w?
+	       (if (and w? (not (member f out)))
 	           (cons f out)
 		   out))]
+      [(sc-execve f)
+       (values (if (member f in)
+       	       	   in
+		   (cons f in)) out)]
       [else
        (values in out)])))
 
