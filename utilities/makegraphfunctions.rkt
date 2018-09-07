@@ -91,7 +91,7 @@
 	
         (cond
           [(equal? (edge-type e) 'dep) ;; dependency so we care about what it is writing
-           (values in out (cons (cons e (list nouts)) dout))]
+           (values in (append nouts out) (cons (cons e (list nouts)) dout))]
           [else
            (values (append nins in) (append nouts out) dout)])))
 
