@@ -273,7 +273,7 @@
          (check-current-target tname t "invoking recipe")
          
          (read-file st)]
-        [`("executing" "shell-command:" ,n_ . ,cmd)
+        [`("executing" "shell-command:" ,n_  ";" . ,cmd)
          (when (equal? (target-name t) "<ROOT>")
            (printf "Not considering a target and running cmd ~a\n" cmd))
          (define n (string->number n_))
@@ -363,9 +363,13 @@
                                  [prqs? (cons #t prqs?-local)]
                                  [ttimes (cons '() ttimes-local)]))]
         [`("argv=" . ,rest)
-         (define cmd (string-join rest " "))
          (define timesline (read-full-line fip))
-         
+
+	 (when (empty? shcalls-local)
+                   (error 'parse-line "shcalls is empty"))
+
+	 (define cmd (shcall-cmd (car shcalls-local)))
+
          (cond
            [(elapsed? timesline cmd) =>
             (lambda (info)
