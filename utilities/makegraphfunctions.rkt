@@ -1,4 +1,4 @@
-#lang racket/base
+#lang errortrace racket/base
 
 (require racket/list
          racket/string
@@ -21,7 +21,8 @@
          verify-edges
 	 longest-leaf         
          print-graph
-         check-dependencies)
+         check-dependencies
+	 get-all-in-out)
 
 (define (get-last-edge t)
   (cond
@@ -38,6 +39,116 @@
     (if (equal? (target-name val) tname)
         (cons val tgs)
         tgs)))
+
+(define (get-all-in-out root_ syscalls)
+  (define (driver root)
+    ;; calculate the ins and outs of its not submake recipes
+    ;; calculate the ins and outs of its depedencies
+    ;; calculate the ins and outs of its submake recipes
+    
+    ;; non submake recipes
+    (define-values (ins1 outs1)
+      (for/fold ([ins '()]
+      		 [outs '()])
+ 		([r (target-data root)])
+	(define-values (ti to)
+          (if (rusage-data? r)
+	      (process-in-out-pid (rusage-data-pid r) syscalls)
+	      (values '() '())))
+        (values (append ti ins) (append to outs))))
+
+    ;; ins and outs of dependencies + submake recipes
+    (define-values (ins2 outs2)
+      (for/fold ([ins '()]
+       		 [outs '()])
+		([e (target-out-edges root)])
+	(define-values (ti to)
+	  (get-all-in-out (edge-end e) syscalls))
+  	(values (append ti ins) (append to outs))))
+
+    (values (append ins1 ins2) (append outs1 outs2)))
+
+  (driver root_))
+
+(define (check-dependencies-recipe root_ graph syscalls)
+  (define (driver root)
+    ;; combine recipes with "edges"
+    ;; Want to go through them in order.
+    ;; compare inputs of edge to the previous edge's outputs
+    (define recipe-edges (filter (lambda (x)
+    	    		 	   (equal? (edge-type x) 'seq))
+				 (target-out-edges root)))
+ 
+    (define all (sort (append (filter rusage-data? (target-data root)) recipe-edges)
+    	    	      	      >
+			      #:key
+			      (lambda (x)
+			        (if (edge? x)
+				    (edge-id x)
+				    (rusage-data-id x)))))
+    (define ins (make-hash))
+    (define outs (make-hash))
+
+    (for ([e all])
+     
+      (define rid (if (edge? e)
+      	      	      (edge-id e)
+		      (rusage-data-id e)))
+      
+      (define-values (i o)
+        (if (edge? e)
+	    (get-all-in-out (edge-end e) syscalls)
+	    (process-in-out-pid (rusage-data-pid e) syscalls)))
+
+      (hash-set! ins rid i)
+      (hash-set! outs rid o))
+
+    ;; loop through the recipes reverse order;
+    (let loop ([comparing '()]
+    	       [recipes (reverse all)])
+      (cond
+       [(empty? recipes)
+        (printf "Need to compare recipes: ~a against dependencies; may be able to run in parallel\n\n" comparing)]
+       [else
+        ;; compare output of car of recipes
+	;; to input of all the recipes in comparing
+	(define tmpouts (if (edge? (car recipes))
+	 		    (hash-ref outs (edge-id (car recipes)))
+			    (hash-ref outs (rusage-data-id (car recipes)))))
+
+       
+	(define pparallel (cons (car recipes) (for/fold ([ls '()])
+		  ([r comparing])
+          (define rins (if (edge? r)
+	  	       	   (hash-ref ins (edge-id r))
+			   (hash-ref ins (rusage-data-id r))))
+
+          (define uses? (let inner ([tmp tmpouts])
+	      	    	  (cond
+	       		   [(empty? tmp)
+	        	    #f]
+	       		   [(member (car tmp) rins)
+	       		    #t]
+	       		   [else
+	        	    (inner (cdr tmp))])))
+	  ;; if r uses car of recipes, then cannot run in parallel with car of recipes
+	  ;; may want to print something here, but what
+	  (if uses? 
+	      ls
+	      (cons r ls)))))
+        (when (> (length pparallel) 1) 
+        (printf "Recipes ~a may be able to run in parallel\n\n" pparallel))
+	(loop pparallel (cdr recipes))]))
+
+
+    ;; recur on edges
+    (for ([r (target-out-edges root)])
+      (driver (edge-end r))))    
+
+  (for ([r (target-out-edges root_)])
+    (driver (edge-end r))))
+
+     
 
 ;; TODO: what about transitive dependencies?
 ;; TODO: also want to check if recipe 2 depends on something recipe 1 produced etc.
@@ -126,7 +237,10 @@
       	      		       	    	       	       	       (target-mfile (edge-end (car p))) used#)))
     (values all-ins all-outs))
 
-  (driver root_))
+  (driver root_)
+
+  (printf "Calling check-dependencies-recipe now\n")
+  (check-dependencies-recipe root_ graph syscalls))
 
 (define (work root_ graph)
   (define visited (make-hash))
