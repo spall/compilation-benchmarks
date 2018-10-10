@@ -5,7 +5,7 @@
          racket/match
          "makegraph.rkt"
          "flags.rkt"
-         "process-syscalls.rkt")
+         "system_calls/process-syscalls.rkt")
 
 (provide get-targets
 	 get-last-edge
@@ -35,7 +35,7 @@
 (define (get-targets graph tname)
   (define targets (makegraph-targets graph))
   (for/fold ([tgs '()])
-            ([val (in-hash-values targets)])
+            ([val (in-hash-keys targets)])
     (if (equal? (target-name val) tname)
         (cons val tgs)
         tgs)))
@@ -53,7 +53,7 @@
  		([r (target-data root)])
 	(define-values (ti to)
           (if (rusage-data? r)
-	      (process-in-out-pid (rusage-data-pid r) syscalls)
+	      (process-in-out-pid (rusage-data-pid r) (rusage-data-dir r) syscalls)
 	      (values '() '())))
         (values (append ti ins) (append to outs))))
 
@@ -321,14 +321,14 @@
   (define-values (target_ time_)
     (for/fold ([maxt #f]
                [max 0])
-              ([t (in-hash-values (makegraph-targets graph))])
+              ([t (in-hash-keys (makegraph-targets graph))])
       ;; test if target is a leaf
       (cond
         [(empty? (target-out-edges t)) ;; leaf
          (define tmp (sum-times (target-data t)))
          (if (> tmp max)
-             tmp
-             max)]
+             (values t tmp)
+             (values maxt max))]
         [else
          (values maxt max)])))
   time_)
@@ -381,7 +381,7 @@
 
 (define (collapse-targets graph)
   (define targets (makegraph-targets graph))
-  (for ([t (in-hash-values targets)])
+  (for ([t (in-hash-keys targets)])
     (set-target-out-edges! t
       (let loop ([es (target-out-edges t)])
         (cond
@@ -394,7 +394,7 @@
 
 (define (verify-edges graph)
 
-  (for ([t (in-hash-values (makegraph-targets graph))])
+  (for ([t (in-hash-keys (makegraph-targets graph))])
     (define es (make-hash))
     (unless (empty? (target-out-edges t))
       (hash-set! es (car (target-out-edges t)) #t)
@@ -434,7 +434,7 @@
   (apply string-append
          (cons "strict digraph {\n"
                (append (for/fold ([accu '()])
-                                 ([val (in-hash-values targets)])
+                                 ([val (in-hash-keys targets)])
                          (append accu
                                  (create-dotfile-edges val)))
                        (list "}\n")))))
@@ -443,7 +443,7 @@
          
 
 (define (print-graph graph)
-  (for ([n (in-hash-values (makegraph-targets graph))])
+  (for ([n (in-hash-keys (makegraph-targets graph))])
     (printf "Processing node <~a,~a,~a>\n" (target-name n) (target-mfile n) (target-id n))
     (printf "target-out-edges: ~a\n" (target-out-edges n))
     (for ([e (target-out-edges n)])
