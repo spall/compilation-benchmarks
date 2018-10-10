@@ -3,18 +3,18 @@
 (require racket/list
 	 "makegraph.rkt"
 	 "makegraphfunctions.rkt"
-	 "process-syscalls.rkt")
+	 "system_calls/process-syscalls.rkt")
 
 (provide build-new-graph)
 
-(define (process-recipes recipes syscalls)
+(define (process-leaf-recipes recipes syscalls)
   
   (define ins (make-hash))
   (define outs (make-hash))
 
   (for ([recipe recipes])
     (when (rusage-data? recipe)
-      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) syscalls))
+      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) (rusage-data-dir recipe) syscalls))
       (hash-set! ins (rusage-data-id recipe) i)
       (hash-set! outs (rusage-data-id recipe) o)))
 
@@ -52,7 +52,7 @@
 					 (cons ols (cdr lss))))
 	     (cdr rs))]
       [else
-       (printf "Recipe is ~a not rusage-data\n" recipe)
+       ;(printf "Recipe is ~a not rusage-data\n" recipe)
        (loop lss (cdr rs))])])))
 
 #| leaf is a target that has no out edges
@@ -74,7 +74,7 @@
   (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() '())) ;; throw away in edges and data
  
   ;; 3. 
-  (for ([ls (process-recipes (target-data t) syscalls)])
+  (for ([ls (process-leaf-recipes (target-data t) syscalls)])
     (define tmp-fake (create-target (symbol->string (gensym "FAKE"))))
     (set-target-mfile! tmp-fake (target-mfile t))
     (cond
@@ -98,7 +98,7 @@
   (for ([recipe (append deps recipes)])
     (cond
      [(rusage-data? recipe)
-      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) syscalls))
+      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) (rusage-data-dir recipe) syscalls))
       (hash-set! ins (rusage-data-id recipe) i)
       (hash-set! outs (rusage-data-id recipe) o)]
      [else ;; edge
@@ -243,10 +243,8 @@
 
 (define (build-new-target t syscalls)
   (if (leaf? t)
-      (begin (printf "processing leaf\n")
-             (build-new-leaf t syscalls))
-      (begin (printf "processing non-leaf\n")
-      (build-new-non-leaf t syscalls))))
+      (build-new-leaf t syscalls)
+      (build-new-non-leaf t syscalls)))
 
 (define (build-new-graph graph syscalls)
   (define ngraph (create-makegraph))
