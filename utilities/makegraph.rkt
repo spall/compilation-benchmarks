@@ -176,7 +176,7 @@
   (write-string (format "cmd: ~a" (rusage-data-cmd rd))  port)
   (when mode (write-string ">" port)))
 
-(struct rusage-data (id pid cmd rc elapsed user system maxrss
+(struct rusage-data (id pid cmd dir rc elapsed user system maxrss
                          avgrss ins outs minflt majflt
                          swaps avgmem avgdata submake?)
   #:methods gen:custom-write
@@ -184,7 +184,7 @@
   #:mutable #:transparent)
 
 (define (create-rusage-data cmd)
-  (rusage-data (get-edge-id) #f cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
+  (rusage-data (get-edge-id) #f cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
 
 (define (all-fields-set? rds)
   (andmap identity
