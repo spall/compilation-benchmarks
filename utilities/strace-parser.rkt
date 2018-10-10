@@ -1,9 +1,10 @@
 #lang errortrace racket
 
 (require parsack
-         "process-syscalls.rkt")
-(provide parse-strace
-         (struct-out syscall))
+         "system_calls/process-syscalls.rkt"
+	 "system_calls/system_calls.rkt")
+
+(provide parse-strace)
 
 (define $finalline (parser-compose
                     (skipMany $space)
@@ -68,7 +69,7 @@
 
 (define $scallline (parser-compose
                     (skipMany $space)
-                    (scall <- (many (<!> (char #\())))
+                    (scall <- (many (<!> (<any> (char #\() $eol))))
                     (args <- $args)
                     (retval <- $retval)
                     (return (syscall (list->string scall) args retval))))
@@ -89,21 +90,28 @@
   (unless (directory-exists? dir)
     (error 'parse-strace "~a is not a directory\n" dir))
 
+  (define names (make-hash))
+
   (define scalls (make-hash))
   (for ([f (in-directory dir)])
     (define ext (path-get-extension f))
     (unless ext
       (error 'parse-strace "~a does not have an extension" f))
     (define pid (string->number (bytes->string/locale ext #f 1)))
-    (printf "parsing file ~a\n" f)
+
     (define syscalls (filter syscall? (parse-file f)))
-    (when (empty? syscalls)
-     (printf "no syscalls\n"))
+
+    (for ([sc syscalls])
+     (hash-set! names (syscall-name sc) #t))      
 
     (when (hash-has-key? scalls pid)
       (error 'parse-strace "Already have processed syscalls for pid ~a" pid))
     
     (hash-set! scalls pid syscalls))
+
+  #;(for ([k (in-hash-keys names)])
+    (printf "~a\n" k))
+
   scalls)
     
     
