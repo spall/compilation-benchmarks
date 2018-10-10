@@ -12,9 +12,9 @@
 (provide parse-rusage)
 
 (define SHELLCOUNT 0)
-(struct shcall (cmd n num-submakes duplicate?) #:mutable #:transparent)
-(define (create-shcall cmd n)
-  (shcall cmd n 0 #f))
+(struct shcall (cmd n dir num-submakes duplicate?) #:mutable #:transparent)
+(define (create-shcall cmd n dir)
+  (shcall cmd n dir 0 #f))
 
 (struct submake (cmd n count depth) #:mutable #:transparent)
 (define (create-submake cmd n)
@@ -273,11 +273,11 @@
          (check-current-target tname t "invoking recipe")
          
          (read-file st)]
-        [`("executing" "shell-command:" ,n_  ";" . ,cmd)
+        [`("executing" "shell-command:" ,n_ ";" ,dir ";" . ,cmd)
          (when (equal? (target-name t) "<ROOT>")
            (printf "Not considering a target and running cmd ~a\n" cmd))
          (define n (string->number n_))
-         (define nshcall (create-shcall (string-join cmd " ") n))
+         (define nshcall (create-shcall (string-join cmd " ") n dir))
          (define nextline (read-full-line fip))
          ;; if next line is an executing sub-make then this is a duplicate.
          (match (string-split nextline)
@@ -364,7 +364,6 @@
                                  [ttimes (cons '() ttimes-local)]))]
         [`("argv=" . ,rest)
          (define timesline (read-full-line fip))
-
 	 (when (empty? shcalls-local)
                    (error 'parse-line "shcalls is empty"))
 
@@ -388,6 +387,7 @@
                    (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
                  (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
                  (set-rusage-data-pid! info pid)
+		 (set-rusage-data-dir! info (shcall-dir (car shcalls-local)))
                  ;; if this is a submake ...........
                  (cond
                    [(shcall-duplicate? (car shcalls-local)) ;; ignore it
@@ -475,6 +475,7 @@
                  (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
                  (set-rusage-data-pid! info pid)
                  (define cdir (car rest))
+		 (set-rusage-data-dir! info cdir)
                  (when DEBUG
                    (printf "current directory is ~a\n" cdir))
                  ;; error checking.
