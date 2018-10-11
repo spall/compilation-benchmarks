@@ -7,7 +7,8 @@
          "system_calls/process-syscalls.rkt"
          "makegraphfunctions.rkt"
          "build-new-graph.rkt"
-         "makegraph.rkt")
+         "makegraph.rkt"
+         "run-graph.rkt")
 
 (define create-dotfile? (make-parameter #f)) 
 (define rusage? (make-parameter #f)) ;; is there rusage data?
@@ -21,6 +22,7 @@
 (define slackness? (make-parameter #f))
 (define strace? (make-parameter #f))
 (define new-graph? (make-parameter #f))
+(define run-new-graph? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -52,6 +54,9 @@
    [("--new-graph")
     "rebuilds graph using strace data"
     (new-graph? #t)]
+   [("--run-new-graph")
+    "rebuilds graph using strace data and then runs it"
+    (run-new-graph? #t)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -127,7 +132,7 @@
      (printf "parallelism is ~a\n" parallelism))
 
    
-   (when (new-graph?)
+   (when (or (new-graph?) (run-new-graph?))
      (define new-graph (build-new-graph graph syscall-info))
      (when (work?)
        (printf "Work for new graph is ~a\n" (work (makegraph-root new-graph))))
@@ -136,8 +141,10 @@
      (when (and (span?) (work?))
        (define parallelism (/ (work (makegraph-root new-graph))
                               (span (makegraph-root new-graph))))
-       (printf "parallelism is ~a\n" parallelism)))
+       (printf "parallelism is ~a\n" parallelism))
 
+     (when (run-new-graph?)
+       (run-graph-sequential new-graph)))
    
    (when (pspeed?)
      (define pu (predicted-speed-upper graph (string->number (pspeed?))))
