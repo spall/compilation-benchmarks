@@ -1,11 +1,21 @@
 #lang errortrace racket/base
 
 (require racket/list
+         racket/sequence
 	 "makegraph.rkt"
 	 "makegraphfunctions.rkt"
 	 "system_calls/process-syscalls.rkt")
 
 (provide build-new-graph)
+
+(define (intersect? ls1 ls2)
+  (cond
+    [(empty? ls1)
+     #f]
+    [(member (car ls1) ls2)
+     #t]
+    [else
+     (intersect? (cdr ls1) ls2)]))
 
 #| leaf is a target that has no out edges
 
@@ -26,7 +36,7 @@
   ;; throw away in edges
 
   (define data (target-data t))
-  (define (ins outs)
+  (define-values (ins outs)
     (cond
       [(hash-ref syscalls (rusage-data-pid data) #f)
        (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
@@ -45,7 +55,7 @@
         [(empty? es)
          (values '() '())]
         [else
-         (call-with-values (lambda () (let (cdr es)))
+         (call-with-values (lambda () (split (cdr es)))
                            (lambda (ds rs)
                              (if (equal? 'dep (edge-type (car es)))
                                  (values (cons (car es) ds) rs)
@@ -64,7 +74,7 @@
            (build-new-target (edge-end d) syscalls))
          
          (if nd
-             (add-dependency nt (build-new-target (edge-end d) syscalls))
+             (add-dependency nt nd)
              (printf "Dependency <~a,~a> did not do anything so deleting from graph\n" (target-name (edge-end d)) (target-mfile (edge-end d))))
          
          (call-with-values (lambda () (process-deps (cdr ds)))
@@ -98,7 +108,7 @@
                 (cond
                   [(empty? crs)
                    (values '() '())]
-                  [(hash-ref ins (target-id (car crs)) #f) =>
+                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
                    (lambda (is)
                      (call-with-values
                       (lambda () (loop (cdr crs)))
@@ -127,12 +137,12 @@
             ;; What does loop do?
             
             ;; compare outs to ins of stuff in cr
-            (define-values (can cants)
+            (define-values (cans cants)
               (let loop ([crs cr])
                 (cond
                   [(empty? crs)
                    (values '() '())] ;; cans and cants
-                  [(hash-ref ins (target-id (car crs)) #f) =>
+                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
                    (lambda (is)
                      (call-with-values
                       (lambda () (loop (cdr crs)))
@@ -148,8 +158,8 @@
             ;; have determined what can run in parallel with (car rs)
             ;; and have determined what cant run in parallel with (car rs)
             
-            (process-reps (cons nt can)
-                          (cons cant rr)
+            (process-reps (cons nt cans)
+                          (cons cants rr)
                           (cdr rs))]
            [nt ;; not enough information to move
             (set! all-ins? #f) (set! all-outs? #f)
