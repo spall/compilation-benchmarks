@@ -158,8 +158,8 @@
   [(define write-proc makegraph-print)]
   #:mutable #:transparent)
 
-(define (create-makegraph)
-  (makegraph (make-hash) #f))
+(define (create-makegraph [root #f])
+  (makegraph (make-hash) root))
 
 (define (add-target-to-makegraph graph t)
   (hash-set! (makegraph-targets graph) t #t))

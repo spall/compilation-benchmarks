@@ -121,7 +121,7 @@
     [else
      #f]))
 
-(struct state (ts prqs? ttimes dirs submakes shcalls overheads))
+(struct state (ts prqs? dirs submakes shcalls overheads))
 
 (define (parse-file fip)
   (define mgraph (create-makegraph))
@@ -131,7 +131,6 @@
   (define (parse-line line st)
     (define ts-local (state-ts st))
     (define prqs?-local (state-prqs? st))
-    (define ttimes-local (state-ttimes st))
     (define dirs-local (state-dirs st))
     (define submakes-local (state-submakes st))
     (define shcalls-local (state-shcalls st))
@@ -143,8 +142,8 @@
       (when (list? (car dirs-local))
         (error 'process-finished-target "Car of dirs is ~a is a list" dirs-local))
       
-      (set-target-mfile! t (car dirs-local)) ;; apparently not totally accurate....
-
+      (set-target-mfile! t (car dirs-local))
+      
       (unless (empty? submakes-local)
         (set-submake-depth! (car submakes-local) (- (submake-depth (car submakes-local)) 1))
         (when (= 0 (submake-depth (car submakes-local)))
@@ -156,9 +155,6 @@
         (error 'parse-line "Expected at least one more prq? to be in stack"))
 
       (define parent (cadr ts-local))
-
-      ;; add info to target.
-      (set-target-data! t (car ttimes-local))
       
       (if (cadr prqs?-local)
           (add-dependency parent t)
@@ -179,7 +175,6 @@
          (read-file (struct-copy state st
                                  [ts (cons ntarget ts-local)]
                                  [prqs? (cons #f prqs?-local)]
-                                 [ttimes (cons '() ttimes-local)]
                                  [dirs (list (car rest))]))]
 	[`("Start" "of" "make" "overhead:" ,ts_ . ,rest)
 	 (define start (string->number ts_))
@@ -200,8 +195,6 @@
 			  (car (car overheads-local))))
 
          (define parent (cadr ts-local)) ;; should be <ROOT>
-
-         (set-target-data! t (cons (- etmp stmp) (car ttimes-local)))
          
          (add-recipe parent t)
 
@@ -210,7 +203,6 @@
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
                                  [prqs? (cdr prqs?-local)]
-                                 [ttimes (cdr ttimes-local)]
                                  [dirs (cdr dirs-local)]
                                  [overheads (if (empty? overheads-local)
 				 	        overheads-local
@@ -224,8 +216,7 @@
                                  [ts (cdr ts-local)]
                                  [prqs? (if (car prqs?-local)
                                             (cons #f (cdr prqs?-local))
-                                            prqs?-local)]
-                                 [ttimes (cdr ttimes-local)]))]
+                                            prqs?-local)]))]
         [`("No" "need" "to" "remake" "target" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "No need to remake")
@@ -234,8 +225,7 @@
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
-                                 [prqs? (cdr prqs?-local)]
-                                 [ttimes (cdr ttimes-local)]))]
+                                 [prqs? (cdr prqs?-local)]))]
         [`("Successfully" "remade" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Successfully remade")
@@ -244,8 +234,7 @@
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
-                                 [prqs? (cdr prqs?-local)]
-                                 [ttimes (cdr ttimes-local)]))]
+                                 [prqs? (cdr prqs?-local)]))]
         [`("Pruning" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          ;; make has decided this target doesnt need to be considered. so
@@ -360,8 +349,7 @@
 
          (read-file (struct-copy state st
                                  [ts (cons ntarget ts-local)]
-                                 [prqs? (cons #t prqs?-local)]
-                                 [ttimes (cons '() ttimes-local)]))]
+                                 [prqs? (cons #t prqs?-local)]))]
         [`("argv=" . ,rest)
          (define timesline (read-full-line fip))
 	 (when (empty? shcalls-local)
@@ -388,30 +376,19 @@
                  (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
                  (set-rusage-data-pid! info pid)
 		 (set-rusage-data-dir! info (shcall-dir (car shcalls-local)))
-                 ;; if this is a submake ...........
                  (cond
-                   [(shcall-duplicate? (car shcalls-local)) ;; ignore it
+                   [(shcall-duplicate? (car shcalls-local)) ;; if this is a submake ignore it
                     (when DEBUG
                       (printf "ignoring cmd ~a\n" cmd))
                     (read-file (struct-copy state st
                                             [shcalls (cdr shcalls-local)]))]
-                   [(> (shcall-num-submakes (car shcalls-local)) 0) ;; launched at least 1 submake but
-                    ;; "not a duplicate"
-                    ;; still need to do some sort of math.....
-                    ;; can we just get last n nodes and do same thing as we did for submake...
-                    ;; TODO what do we do in this case?
-                    ;; possible cases
-                    ;; for i ...... make i
-                    ;; - just have a make for each call....
-                    ;; not clear this will ever happen, but
-                    ;(printf "Processing shell command with submakes that is not a duplicate ~a; ~a\n" n_ (string-join rest " "))
-
+                   [(> (shcall-num-submakes (car shcalls-local)) 0) ;; launched at least 1 submake
                     (define last-edges (get-last-edges t (shcall-num-submakes (car shcalls-local))))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
                     ;; create  new fake node.
                     (define tmp-FAKE (create-target (symbol->string (gensym "FAKE"))))
-                    (set-target-mfile! tmp-FAKE "top")
+                    (set-target-mfile! tmp-FAKE "top") ;; this is probably wrong
                     ;; add to graph
                     (add-target-to-makegraph mgraph tmp-FAKE)
                     
@@ -422,7 +399,7 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (set-target-data! tmp-FAKE (list info))
+                    ;(set-target-data! tmp-FAKE (list info)) TODO: what about this case?
                     
                     (add-recipe t tmp-FAKE)
 
@@ -431,9 +408,13 @@
                    [else ;; if this is not a submake......
                     (set! SHELLCOUNT (+ 1 SHELLCOUNT))
 
+                    (define shcall-target (create-target (symbol->string (gensym "SHCALL"))))
+                    (set-target-mfile! shcall-target "top") ;; this is probably wrong
+                    (set-target-data! shcall-target info)
+                    (add-target-to-makegraph mgraph shcall-target)
+                    (add-recipe t shcall-target)
+                    
                     (read-file (struct-copy state st
-                                            [ttimes (cons (cons info (car ttimes-local))
-                                                          (cdr ttimes-local))]
                                             [shcalls (cdr shcalls-local)]))])]
                 [else
                  (error 'parse-line "Got ~a instead of 'finished shell-command:' following ~a" finishline line)]))]
@@ -533,7 +514,7 @@
     (define line (read-full-line fip))
     (parse-line line st))
   
-  (read-file (state (list root) (list #f) (list '()) #f '() '() '()))
+  (read-file (state (list root) (list #f) #f '() '() '()))
   (add-target-to-makegraph mgraph root)
   mgraph)
       

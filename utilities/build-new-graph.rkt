@@ -1,59 +1,21 @@
 #lang errortrace racket/base
 
 (require racket/list
+         racket/sequence
 	 "makegraph.rkt"
 	 "makegraphfunctions.rkt"
 	 "system_calls/process-syscalls.rkt")
 
 (provide build-new-graph)
 
-(define (process-leaf-recipes recipes syscalls)
-  
-  (define ins (make-hash))
-  (define outs (make-hash))
-
-  (for ([recipe recipes])
-    (when (rusage-data? recipe)
-      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) (rusage-data-dir recipe) syscalls))
-      (hash-set! ins (rusage-data-id recipe) i)
-      (hash-set! outs (rusage-data-id recipe) o)))
-
-  (let loop ([lss (list '())]
-  	     [rs recipes])
-    (cond
-     [(empty? rs)
-      lss]
-     [else
-      (define recipe (car rs))
-      (cond
-       [(rusage-data? recipe)
-        (define rid (rusage-data-id recipe))
-	(define ls (car lss))
-	;; compare output of recipe to all of the recipes in ls
-	(define routs (hash-ref outs rid))
-
-	(define-values (nls ols)
-	  (for/fold ([nls '()]
-		     [ols '()])
-		    ([l ls]) ;; l is an rusage-data structure
-            (define lin (hash-ref ins (rusage-data-id l)))
-	    (if (let inner ([tmp routs])
-	          (cond
-		   [(empty? tmp)
-		    #f]
-		   [(member (car tmp) lin)
-		    #t]
-		   [else
-		    (inner (cdr tmp))]))
-	         (values nls (cons l ols))
-	         (values (cons l nls) ols))))
-       (loop (cons (cons recipe nls) (if (empty? ols)
-       	     	   	 	     	 (cdr lss)
-					 (cons ols (cdr lss))))
-	     (cdr rs))]
-      [else
-       ;(printf "Recipe is ~a not rusage-data\n" recipe)
-       (loop lss (cdr rs))])])))
+(define (intersect? ls1 ls2)
+  (cond
+    [(empty? ls1)
+     #f]
+    [(member (car ls1) ls2)
+     #t]
+    [else
+     (intersect? (cdr ls1) ls2)]))
 
 #| leaf is a target that has no out edges
 
@@ -68,185 +30,189 @@
    4. Create a 'seq edge from copy of current target to new fake targets;
    5. return this new target 
 |#
-(define (build-new-leaf t syscalls)
-  
+(define (build-new-leaf t syscalls)  
   ;; 4. create copy of target
-  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() '())) ;; throw away in edges and data
- 
-  ;; 3. 
-  (for ([ls (process-leaf-recipes (target-data t) syscalls)])
-    (define tmp-fake (create-target (symbol->string (gensym "FAKE"))))
-    (set-target-mfile! tmp-fake (target-mfile t))
+  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() (target-data t)))
+  ;; throw away in edges
+
+  (define data (target-data t))
+  (define-values (ins outs)
     (cond
-     [(= 1 (length ls))
-      (set-target-data! tmp-fake ls)]
-     [else
-      (for ([l ls])
-        (define tmp (create-target (symbol->string (gensym "FAKE"))))
-	(set-target-mfile! tmp (target-mfile t))
-	(set-target-data! tmp (list l))
-	(add-dependency tmp-fake tmp))])
-    (add-recipe nt tmp-fake))      
-
-  nt)
-
-(define (process-recipes2 recipes deps syscalls)
+      [(hash-ref syscalls (rusage-data-pid data) #f)
+       (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
+      [else ;; no info
+       (values #f #f)]))
   
-  (define ins (make-hash))
-  (define outs (make-hash))
-
-  (for ([recipe (append deps recipes)])
-    (cond
-     [(rusage-data? recipe)
-      (define-values (i o) (process-in-out-pid (rusage-data-pid recipe) (rusage-data-dir recipe) syscalls))
-      (hash-set! ins (rusage-data-id recipe) i)
-      (hash-set! outs (rusage-data-id recipe) o)]
-     [else ;; edge
-      (define-values (i o) (get-all-in-out (edge-end recipe) syscalls))
-      (hash-set! ins (edge-id recipe) i)
-      (hash-set! outs (edge-id recipe) o)]))
-
-  (let loop ([lss (list '())]
-  	     [rs recipes])
-    (cond
-     [(empty? rs)
-      ;; compare car of lss to deps
-      (define-values (ndeps ols)
-        (for/fold ([ndeps '()]
-      		   [ols '()])
-                  ([l (car lss)])
-          (define lins (hash-ref ins (if (rusage-data? l)
-		     	       	         (rusage-data-id l)
-				         (edge-id l))))
-          (let outer ([ds deps])
-	    (cond
-	     [(empty? ds)
-	      (values (cons l ndeps) ols)]
-	     [(let inner ([ds2 (hash-ref outs (edge-id (car ds)))])
-	        (cond
-	         [(empty? ds2)
-	      	  #f]
-	         [(member (car ds2) lins)
-	      	  #t]
-	         [else
-	      	  (inner (cdr ds2))]))
-	      (values ndeps (cons l ols))]
-	     [else
-	      (outer (cdr ds))]))))
-      (values ndeps (if (empty? ols)
-       	      	    	(cdr lss)
-			(cons ols (cdr lss))))] 
-     [else
-      (define recipe (car rs))
-      (define rid (if (edge? recipe)
-      	      	      (edge-id recipe)
-		      (rusage-data-id recipe)))
-      (define ls (car lss))
-      ;; compare output of recipe to all of the recipes in ls
-      (define routs (hash-ref outs rid))
-      (define-values (nls ols)
-	  (for/fold ([nls '()]
-		     [ols '()])
-		    ([l ls]) ;; l is an rusage-data structure or an edge
-            (define lin (hash-ref ins (if (edge? l)
-	    	    		      	  (edge-id l)
-					  (rusage-data-id l))))
-	    (if (let inner ([tmp routs])
-	          (cond
-		   [(empty? tmp)
-		    #f]
-		   [(member (car tmp) lin)
-		    #t]
-		   [else
-		    (inner (cdr tmp))]))
-	         (values nls (cons l ols))
-	         (values (cons l nls) ols))))
-      (loop (cons (cons recipe nls) (if (empty? ols)
-       	     	   	 	     	 (cdr lss)
-					 (cons ols (cdr lss))))
-	     (cdr rs))])))
-
-#|
-   non-leaf node has and/or dependencies and recipes
-   1. Need to recur on all dependencies and recursive make recipes
-   2. First thing is to probably create a list of dependencies
-      and create a list of recipes; which are combination of target-data and submakes
-   3. Do the same analysis   
-|#
+  (values nt ins outs))
+  
 (define (build-new-non-leaf t syscalls)
   ;; 4. create copy of target
-  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() '())) ;; throw away in edges and data
-  
+  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() #f)) ;; throw away in edges
+
   (define-values (deps reps)
-    (for/fold ([ds '()]
-    	       [rs '()])
-	      ([e (target-out-edges t)])
+    (let split ([es (target-out-edges t)])
       (cond
-       [(equal? (edge-type e) 'dep)
-        (values (cons e ds) rs)]
-       [else
-        (values ds (cons e rs))])))
+        [(empty? es)
+         (values '() '())]
+        [else
+         (call-with-values (lambda () (split (cdr es)))
+                           (lambda (ds rs)
+                             (if (equal? 'dep (edge-type (car es)))
+                                 (values (cons (car es) ds) rs)
+                                 (values ds (cons (car es) rs)))))])))
 
-  (for ([d deps])
-    ;; want to recur on d and add as a dependency to nt
-    (add-dependency nt (build-new-target (edge-end d) syscalls)))
-
-  ;; need to combine reps with any target-data
-  (define recipes (sort (append (filter rusage-data? (target-data t)) reps)
-  	  	  	>
-			#:key (lambda (x)
-			        (if (edge? x)
-				    (edge-id x)
-				    (rusage-data-id x)))))
-
-  (define-values (ndeps nreps) (process-recipes2 (reverse recipes) deps syscalls))
-
-  (for ([d ndeps])
-    (cond
-     [(edge? d)
-      (add-dependency nt (build-new-target (edge-end d) syscalls))]
-     [else
-      (define tmp (create-target (symbol->string (gensym "FAKE"))))
-      (set-target-mfile! tmp (target-mfile t))
-      (set-target-data! tmp (list d))
-      (add-dependency nt tmp)]))
-
-  (for ([ls nreps])
-    (cond
-     [(= 1 (length ls))
+  ;; collect all of the ins and outs of all of the dependencies
+  ;; rebuild all of the dependencies and add to graph
+  (define-values (dins douts)
+    (let process-deps ([ds deps])
       (cond
-       [(edge? (car ls))
-        (add-recipe nt (build-new-target (edge-end (car ls)) syscalls))]
-       [else
-        (define tmp-fake (create-target (symbol->string (gensym "FAKE"))))
-    	(set-target-mfile! tmp-fake (target-mfile t))
-	(set-target-data! tmp-fake ls)
-	(add-recipe nt tmp-fake)])]
-     [else
-      (define tmp-fake (create-target (symbol->string (gensym "FAKE"))))
-      (set-target-mfile! tmp-fake (target-mfile t))
-      (for ([l ls])
-        (cond
-	 [(edge? l)
-	  (add-dependency tmp-fake (build-new-target (edge-end l) syscalls))]
-	 [else
-	  (define tmp (create-target (symbol->string (gensym "FAKE"))))
-	  (set-target-mfile! tmp (target-mfile t))
-	  (set-target-data! tmp (list l))
-	  (add-dependency tmp-fake tmp)]))
-       (add-recipe nt tmp-fake)]))
+        [(empty? ds)
+         (values '() '())]
+        [else
+         (define d (car ds))
+         (define-values (nd ins outs)
+           (build-new-target (edge-end d) syscalls))
+         
+         (if nd
+             (add-dependency nt nd)
+             (printf "Dependency <~a,~a> did not do anything so deleting from graph\n" (target-name (edge-end d)) (target-mfile (edge-end d))))
+         
+         (call-with-values (lambda () (process-deps (cdr ds)))
+                           (lambda (is os)
+                             (values (and ins is (append ins is))
+                                     (and outs os (append outs os)))))])))
 
-  nt)  
-			 
+  ;; Want to process recipes in reverse order of how they were run.
+  ;; Example: run a, run b, run c;
+  ;; Want to process c; then compare ins of c to outs o b;
+  ;; if they do not share ins and outs;
+  ;; then want to compare ins of b and c to outs of a.
+  ;; etc.
+  ;; then if c uses outs of a; but b does not
+  ;; want to compare ins of a and b to outs of dependencies
+  (define rep-ins (make-hash))
+  (define rep-outs (make-hash))
+  (define all-ins? #t)
+  (define all-outs? #t)
+  
+  (define-values (new-deps new-recipes)
+    (let process-reps ([cr '()]
+                       [rr '()]
+                       [rs reps])
+      (cond
+        [(empty? rs) ;; compare cr to  deps
+         (cond
+           [douts
+            (define-values (cans cants)
+              (let loop ([crs cr])
+                (cond
+                  [(empty? crs)
+                   (values '() '())]
+                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
+                   (lambda (is)
+                     (call-with-values
+                      (lambda () (loop (cdr crs)))
+                      (lambda (can cant)
+                        (if (intersect? douts is) ;; can't move
+                            (values can (cons (car crs) cant))
+                            (values (cons (car crs) can) cant)))))]
+                  [else
+                   (call-with-values
+                    (lambda () (loop (cdr crs)))
+                    (lambda (can cant)
+                      (values can (cons (car crs) cant))))])))
+            
+            (values cans (cons cants rr))]
+           [else ;; can't move antyhing
+            (values '() (cons cr rr))])]
+        [else ;; compare (car rs) to each thing in cr
+         (define-values (nt ins outs)
+           (build-new-target (edge-end (car rs)) syscalls))
+         
+         (cond
+           [(and nt ins outs) ;; enough information to move 
+            (hash-set! rep-ins (target-id nt) ins)
+            (hash-set! rep-outs (target-id nt) outs)
+            
+            ;; What does loop do?
+            
+            ;; compare outs to ins of stuff in cr
+            (define-values (cans cants)
+              (let loop ([crs cr])
+                (cond
+                  [(empty? crs)
+                   (values '() '())] ;; cans and cants
+                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
+                   (lambda (is)
+                     (call-with-values
+                      (lambda () (loop (cdr crs)))
+                      (lambda (can cant)
+                        (if (intersect? outs is) ;; can't move
+                            (values can (cons (car crs) cant))
+                            (values (cons (car crs) can) cant)))))]
+                  [else ;; no info for this one
+                   (call-with-values (lambda () (loop (cdr crs)))
+                                     (lambda (can cant)
+                                       (values can (cons (car crs) cant))))])))
+            
+            ;; have determined what can run in parallel with (car rs)
+            ;; and have determined what cant run in parallel with (car rs)
+            
+            (process-reps (cons nt cans)
+                          (cons cants rr)
+                          (cdr rs))]
+           [nt ;; not enough information to move
+            (set! all-ins? #f) (set! all-outs? #f)
+            (process-reps (list nt)
+                          (cons cr rr)
+                          (cdr rs))]
+           [else ;; target didn't do anything so ignore it
+            (process-reps cr rr (cdr rs))])])))
+
+  ;; have new deps if there are any and have new recipe ordering
+
+  (for ([nd new-deps])
+    (add-dependency nt nd))
+
+  (for ([nrs new-recipes])
+    (unless (empty? nrs)
+      (cond
+        [(= 1 (length nrs))
+         (add-recipe nt (car nrs))]
+        [else
+         (define tmp (create-target (symbol->string (gensym "FAKE"))))
+         (set-target-mfile! tmp (target-mfile nt))
+         (for ([nr nrs])
+           (add-dependency tmp nr))
+         (add-recipe nt tmp)])))
+
+  ;; done
+  (values nt (and all-ins? dins (append dins
+                                       (sequence->list (in-hash-values rep-ins))))
+          (and all-outs? douts (append douts
+                                       (sequence->list (in-hash-values rep-outs))))))
+
 (define (leaf? t)
   (empty? (target-out-edges t)))
 
+(define (nothing-target? t)
+  (and (leaf? t)
+       (not (rusage-data? (target-data t)))))
+
 (define (build-new-target t syscalls)
-  (if (leaf? t)
-      (build-new-leaf t syscalls)
-      (build-new-non-leaf t syscalls)))
+  (cond
+    [(nothing-target? t)
+     (values #f '() '())]  ;; target didn't do anything; so just delete it
+    [(leaf? t)
+     (build-new-leaf t syscalls)]
+    [else
+     (build-new-non-leaf t syscalls)]))
 
 (define (build-new-graph graph syscalls)
-  (define ngraph (create-makegraph))
-  (set-makegraph-root! ngraph (build-new-target (makegraph-root graph) syscalls))
-  ngraph)  
+  (define-values (nroot _ __)
+    (build-new-target (makegraph-root graph) syscalls))
+
+  (unless nroot
+    (error 'build-new-graph "Did not create new root target!"))
+
+  (create-makegraph nroot))
