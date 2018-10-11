@@ -4,8 +4,9 @@
          racket/list
          "rusage-parser.rkt"
          "strace-parser.rkt"
-         "process-syscalls.rkt"
+         "system_calls/process-syscalls.rkt"
          "makegraphfunctions.rkt"
+         "build-new-graph.rkt"
          "makegraph.rkt")
 
 (define create-dotfile? (make-parameter #f)) 
@@ -19,7 +20,7 @@
 (define pspeed? (make-parameter #f))
 (define slackness? (make-parameter #f))
 (define strace? (make-parameter #f))
-(define check-deps? (make-parameter #f))
+(define new-graph? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -48,9 +49,9 @@
    [("--strace-data") stfile
     "Parse strace data and connect with build graph"
     (strace? stfile)]
-   [("--check-dep")
-    "Checks dependencies using strace data"
-    (check-deps? #t)]
+   [("--new-graph")
+    "rebuilds graph using strace data"
+    (new-graph? #t)]
    ;; add other things here.
    #:once-any
    [("-r" "--rusage-data")
@@ -80,8 +81,8 @@
      	        [len 0])
 	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
-         (let ([work_ (work (makegraph-root graph) graph)]
-	       [span_ (span (makegraph-root graph) graph)]
+         (let ([work_ (work (makegraph-root graph))]
+	       [span_ (span (makegraph-root graph))]
 	       [leaf_ (longest-leaf graph)])
 	 (printf "~a ~a ~a\n" work_ span_ leaf_)
 	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
@@ -113,22 +114,30 @@
                           (parse-strace (strace?))))
    
    (when (work?)
-     (define w (work (makegraph-root graph) graph))
+     (define w (work (makegraph-root graph)))
      (printf "Work is ~a\n" w))
    
    (when (span?)
-     (define s (span (makegraph-root graph) graph))
+     (define s (span (makegraph-root graph)))
      (printf "span is ~a\n" s))
-
-   (when (check-deps?)
-     (when (void? syscall-info)
-       (error 'driver "No system call info"))
-     (check-dependencies (makegraph-root graph) graph syscall-info))
    
    (when (and (span?) (work?))
-     (define parallelism (/ (work (makegraph-root graph) graph)
-                            (span (makegraph-root graph) graph)))
+     (define parallelism (/ (work (makegraph-root graph))
+                            (span (makegraph-root graph))))
      (printf "parallelism is ~a\n" parallelism))
+
+   
+   (when (new-graph?)
+     (define new-graph (build-new-graph graph syscall-info))
+     (when (work?)
+       (printf "Work for new graph is ~a\n" (work (makegraph-root new-graph))))
+     (when (span?)
+       (printf "Span for new graph is ~a\n" (span (makegraph-root new-graph))))
+     (when (and (span?) (work?))
+       (define parallelism (/ (work (makegraph-root new-graph))
+                              (span (makegraph-root new-graph))))
+       (printf "parallelism is ~a\n" parallelism)))
+
    
    (when (pspeed?)
      (define pu (predicted-speed-upper graph (string->number (pspeed?))))
