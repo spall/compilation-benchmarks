@@ -45,7 +45,6 @@
     ;; calculate the ins and outs of its not submake recipes
     ;; calculate the ins and outs of its depedencies
     ;; calculate the ins and outs of its submake recipes
-    
     ;; non submake recipes
     (define-values (ins1 outs1)
       (for/fold ([ins '()]
@@ -242,104 +241,78 @@
   (printf "Calling check-dependencies-recipe now\n")
   (check-dependencies-recipe root_ graph syscalls))
 
-(define (work root_ graph)
-  (define visited (make-hash))
-  (define (driver root)
-    (+ (sum-times (target-data root))
-       (for/sum ([e (reverse (target-out-edges root))])
-         (define n (edge-end e))
-         
-         (when (hash-ref visited n #f)
-           (error 'work "Visited node <~a,~a> a 2nd time from <~a,~a>!" (target-name n) (target-mfile n) (target-name root) (target-mfile root)))
-         
-         (hash-set! visited n #t)
-         (driver n))))
-  (hash-set! visited root_ #t)
-  (define w (driver root_))
+(define (leaf-node? node)
+  (empty? (target-out-edges node)))
 
-  ;; Checking that we visited each node once. If we did not; there is a problem.
-  ;; this only works if we are checking entire graph.
-  (for ([t (in-hash-keys (makegraph-targets graph))])
-    (unless (hash-ref visited t #f)
-      (error 'work "dep Never visited node ~a!" t)))
-  w)
-    
-(define (sum-times ttimes)
+(define (work node)
   (cond
-    [(empty? ttimes)
-     0]
-    [(rusage-data? (car ttimes))
-     (cond
-       [(not (rusage-data-submake? (car ttimes)))
-        (+ (rusage-data-elapsed (car ttimes))
-           (sum-times (cdr ttimes)))]
-       [else
-        (sum-times (cdr ttimes))])]
+    [(leaf-node? node)
+     (leaf-node-work node)]
     [else
-     (unless (number? (car ttimes))
-       (error 'sum-times "neither rusage-data nor a number ~a" (car ttimes)))
-       #;(printf "summing ~a\n" (car ttimes))
-     (+ (car ttimes)
-        (sum-times (cdr ttimes)))]))
+     (non-leaf-node-work node)]))
+
+(define (leaf-node-work node)
+  (define data (target-data node))
+  (cond
+    [(rusage-data? data)
+     (rusage-data-elapsed data)]
+    [(number? data)
+     data]
+    [else
+     (error 'leaf-node-work "Unrecognized data ~a" data)]))
+
+(define (non-leaf-node-work node)
+  (for/sum ([e (reverse (target-out-edges node))])
+    (define n (edge-end e))
+    (work n)))
 
 ;; Span(root) = longest time down deps path + sum of times of recipes paths
-(define (span root_ graph)
-  (define visited (make-hash))
-  (define (driver root)
-    (define-values (sd wd)
-      (for/fold ([max_ 0]
-                 [sum (sum-times (target-data root))])
-                ([e (reverse (target-out-edges root))])
-        (define n (edge-end e))
-        (when (hash-ref visited n #f)
-          (error 'span "Visited node ~a a 2nd time!" n))
+(define (span node)
+  (cond
+    [(leaf-node? node)
+     (leaf-node-span node)]
+    [else
+     (non-leaf-node-span node)]))
 
-        (define tmpspan (driver n))
+(define (leaf-node-span node)
+  (define data (target-data node))
+  (cond
+    [(rusage-data? data)
+     (rusage-data-elapsed data)]
+    [(number? data)
+     data]
+    [else
+     (error 'leaf-node-span "Unrecognized data ~a" data)]))
 
-        (cond
-          [(equal? 'dep (edge-type e))
-           (values (max max_ tmpspan) sum)]
-          [else
-           (values max_ (+ sum tmpspan))])))
+(define (non-leaf-node-span node)
+  (define-values (m s)
+    (for/fold ([max_ 0]
+               [sum 0])
+              ([e (reverse (target-out-edges node))])
+      (define n (edge-end e))
+      (define tmpspan (span n))
+      
+      (cond
+        [(equal? 'dep (edge-type e))
+         (values (max max_ tmpspan) sum)]
+        [else
+         (values max_ (+ sum tmpspan))])))
+  (+ m s))
 
-    (+ sd wd))
-
-  (hash-set! visited root_ #t)
-  (define s (driver root_))
-
-  ;; Checking that we visited each node once. If we did not; there is a problem.
-  ;; this only works if we are checking entire graph.
-  #;(for ([t (in-hash-keys (makegraph-targets graph))])
-      (unless (hash-ref visited t #f)
-        (error 'span "Never visited node ~a during span calculation!" t)))  
-  s)
 
 (define (longest-target root_ graph)
   (void)) ;; todo
 
 (define (longest-leaf graph)
-  (define-values (target_ time_)
-    (for/fold ([maxt #f]
-               [max 0])
-              ([t (in-hash-keys (makegraph-targets graph))])
-      ;; test if target is a leaf
-      (cond
-        [(empty? (target-out-edges t)) ;; leaf
-         (define tmp (sum-times (target-data t)))
-         (if (> tmp max)
-             (values t tmp)
-             (values maxt max))]
-        [else
-         (values maxt max)])))
-  time_)
+  (void))
 
 (define (longest-recipe root_ graph)
   (void))
 
 ;; factor by which the parallelism of the computation exceeds the number of processors
 (define (parallel-slackness graph pcount)
-  (define work_ (work (makegraph-root graph) graph))
-  (define span_ (span (makegraph-root graph) graph))
+  (define work_ (work (makegraph-root graph)))
+  (define span_ (span (makegraph-root graph)))
   (exact->inexact (/ work_ (* pcount span_))))
 
 #|
@@ -349,17 +322,17 @@
 |#
 (define (predicted-speed-upper graph pcount [work_ #f] [span_ #f])
   (unless work_
-    (set! work_ (work (makegraph-root graph) graph)))
+    (set! work_ (work (makegraph-root graph))))
   (unless span_
-    (set! span_ (span (makegraph-root graph) graph)))
+    (set! span_ (span (makegraph-root graph))))
 
   (exact->inexact (+ span_ (/ work_ pcount))))
 
 (define (predicted-speed-lower graph pcount [work_ #f] [span_ #f])
   (unless work_
-    (set! work_ (work (makegraph-root graph) graph)))
+    (set! work_ (work (makegraph-root graph))))
   (unless span_
-    (set! span_ (span (makegraph-root graph) graph)))
+    (set! span_ (span (makegraph-root graph))))
   (define speed (exact->inexact (/ work_ pcount)))
 
   (if (< speed span_)
@@ -368,7 +341,7 @@
 
 (define (predicted-speed-perfect-linear graph pcount [work_ #f])
   (unless work_
-    (set! work_ (work (makegraph-root graph) graph)))
+    (set! work_ (work (makegraph-root graph))))
   (exact->inexact (/ work_ pcount)))
 
 (define (print-all-targets-and-mfiles graph name)
