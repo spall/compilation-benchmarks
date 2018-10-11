@@ -36,7 +36,7 @@
      (define-values (deps recipes)
        (separate-edges (target-out-edges t)))
      
-     (for ([d deps])
+     (for ([d (shuffle deps)]) ;; run these in strange order
        (run-target-sequential (edge-end d)))
      
      (for ([r recipes])
