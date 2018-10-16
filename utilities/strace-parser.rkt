@@ -1,118 +1,118 @@
-#lang errortrace racket
+#lang errortrace racket/base
 
-(require parsack
-         "system_calls/process-syscalls.rkt"
-	 "system_calls/system_calls.rkt")
+(require "system_calls/process-syscalls.rkt"
+         "system_calls/system_calls.rkt"
+         parser-tools/lex
+         parser-tools/yacc
+         syntax/readerr
+         racket/path
+         (prefix-in : parser-tools/lex-sre))
 
 (provide parse-strace)
 
-(define $finalline (parser-compose
-                    (skipMany $space)
-                    (line <- (between (string "+++") (string "+++") (many (<!> (string "+++")))))
-                    (<any> (try $eol) (lookAhead $eof))
-                    (return line)))
+(define-tokens data (ARGS RETVAL SCALL))
+(define-empty-tokens delim (EOF))
 
-(define $aparen (parser-seq
-                 (many (<!> (<any> (char #\\) (char #\") (char #\() (char #\)))))
-                 (<any> $escaped $quotes $openparen $closeparen)
-                 #:combine-with append))
+(define strace-lexer
+  (lexer-src-pos
+   ;; skip final line and signal lines
+   [(eof) 'EOF]
+   [(:or signal final whitespace) (return-without-pos (strace-lexer input-port))]
+   [#\( (token-ARGS (apply string-append ((args-lexer) input-port)))]
+   [#\= (token-RETVAL (apply string-append (retval-lexer input-port)))]
+   [(:~ #\() (token-SCALL (apply string-append (cons lexeme (scall-lexer input-port))))]))
+   
 
-(define $escaped (parser-seq
-                  (char #\\)
-                  $anyChar))
+(define scall-lexer
+  (lexer
+   [(:: (:* (:~ #\())) (list lexeme)]))
 
-(define $quotes (parser-compose
-                 (q <- (char #\"))
-                 (qc <- (getState 'qc))
-                 (setState 'qc (+ 1 qc))
-                 (return (list q))))
+(define retval-lexer
+  (lexer
+   [#\newline null]
+   [any-char (cons lexeme (retval-lexer input-port))]))
 
-(define $openparen (parser-compose
-                    (p <- (char #\())
-                    (qc <- (getState 'qc))
-                    (pc <- (getState 'pc))
-                    (setState 'pc (if (odd? qc)
-                                      pc
-                                      (+ 1 pc)))
-                    (return (list p))))
+(define (args-lexer [pc 0])
+  (lexer
+   [#\" (append (cons lexeme (string-lexer input-port))
+              ((args-lexer pc) input-port))]
+   [#\( (cons lexeme ((args-lexer (+ pc 1)) input-port))]
+   [#\) (if (= 0 pc)
+            null
+            (cons lexeme ((args-lexer (- pc 1)) input-port)))]
+   [any-char (cons lexeme ((args-lexer pc) input-port))]))
 
-(define $closeparen (parser-compose
-                     (p <- (char #\)))
-                     (qc <- (getState 'qc))
-                     (pc <- (getState 'pc))
-                     (setState 'pc (if (odd? qc)
-                                       pc
-                                       (- pc 1)))
-                     (return (list p))))
+(define string-lexer
+  (lexer
+   [#\" (list lexeme)]
+   [(:: #\\ any-char) (cons lexeme (string-lexer input-port))]
+   [any-char (cons lexeme (string-lexer input-port))]))
 
-(define $done (parser-compose
-               (qc <- (getState 'qc))
-               (pc <- (getState 'pc))
-               (if (= 0 pc)
-                   (return null)
-                   $err)))
+(define-lex-abbrevs
+  [whitespace (:or #\newline #\space #\tab #\return #\vtab)]
+  [signal (:: "---" (:* (complement "---")) "---")]
+  [final (:: "+++" (:* (complement "+++")) "+++")])
 
-(define $args (withState (['pc 0]
-                          ['qc 0])
-                         (parser-seq
-                          $openparen
-                          (manyUntil $aparen $done) ;; fix this because this is returning lists...
-                          #:combine-with (lambda (a b)
-                                           (list->string (flatten (append a b)))))))
+;; parser
 
-(define $retval (parser-seq
-                 (~ (skipMany $space))
-                 (~ (char #\=))
-                 (~ (skipMany $space))
-                 (manyUntil $anyChar (<any> (try $eol) (lookAhead $eof)))
-                 #:combine-with list->string))
+(define (strace-parser f)
+  (parser
+   (src-pos)
 
-(define $scallline (parser-compose
-                    (skipMany $space)
-                    (scall <- (many (<!> (<any> (char #\() $eol))))
-                    (args <- $args)
-                    (retval <- $retval)
-                    (return (syscall (list->string scall) args retval))))
-            
-(define $nomatch (parser-compose
-		  (manyUntil $anyChar (<any> (try $eol) (lookAhead $eof)))
-		  (return null)))
-       
-(define $line
-  (<or> (try $finalline)
-        (try $scallline)
-        $nomatch))
+   (start s)
+   (end EOF)
+   
+   (error(lambda (a name val start end)
+           (printf "token is ~a ~a\n" name val)
+              (raise-read-error 
+               "read-error"
+               f
+               (position-line start)
+               (position-col start)
+               (position-offset start)
+               (- (position-offset end)
+                  (position-offset start)))))
+   
+   
+   (tokens data delim)
+   
+   (grammar
 
-(define (parse-file f)
-  (parse-result (manyUntil $line $eof) f))
+    (s [(scall-list) (reverse $1)])
+    
+    (scall
+     [(SCALL ARGS RETVAL) (syscall $1 $2 $3)])
+    
+    (scall-list [() null]
+                [(scall-list scall) (cons $2 $1)]))))
+    
 
+;; parses an strace file
+ (define (parse-file f)
+   (define file-port (open-input-file f #:mode 'text))
+
+   (begin0 ((strace-parser f) (lambda () (strace-lexer file-port)))
+     (close-input-port file-port)))
+
+;; takes a directory of strace output files
 (define (parse-strace dir)
   (unless (directory-exists? dir)
     (error 'parse-strace "~a is not a directory\n" dir))
 
-  (define names (make-hash))
-
   (define scalls (make-hash))
+  
   (for ([f (in-directory dir)])
     (define ext (path-get-extension f))
     (unless ext
       (error 'parse-strace "~a does not have an extension" f))
     (define pid (string->number (bytes->string/locale ext #f 1)))
 
-    (define syscalls (filter syscall? (parse-file f)))
-
-    (for ([sc syscalls])
-     (hash-set! names (syscall-name sc) #t))      
-
     (when (hash-has-key? scalls pid)
       (error 'parse-strace "Already have processed syscalls for pid ~a" pid))
     
-    (hash-set! scalls pid syscalls))
-
-  #;(for ([k (in-hash-keys names)])
-    (printf "~a\n" k))
+    (hash-set! scalld pid (parse-file f)))
 
   scalls)
-    
-    
-    
+
+
+
