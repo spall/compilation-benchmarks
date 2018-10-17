@@ -41,6 +41,23 @@
    [else
     (path->complete-path fname  (lookup-file-descriptor-error table fd func))]))
 
+
+;; dumb lexer; can't handle comma's inside of parens
+(define arg-lexer
+  (lexer
+   [(eof) ""]
+   [whitespace (arg-lexer input-port)]
+   [#\, ""]
+   [any-char (string-append lexeme (arg-lexer input-port))]))
+
+(define (args-parser n ip)
+  (cond
+    [(> n 0)
+     (cons (arg-lexer ip)
+           (args-parser (- n 1) ip))]
+    [else
+     '()]))
+
 (define (parse-flags bops)
   (match bops
    [(expr:binop _ l op r)
@@ -140,9 +157,9 @@
      (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path)))
 
 (define (parse-execve-syscall scall cdir table)
-  ;; c parser doesn't seem compatible with this
-     (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
-     (values (sc-execve fname) #f table))
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  
+  (values (sc-execve fname) #f table))
 
 (define (parse-chdir-syscall scall cdir table)
   ;; todo consider if fpath is relative.........
@@ -168,7 +185,7 @@
      (values #f (lookup-file-descriptor-error table fdir 'parse-fchdir-syscall) table))
 
 (define (parse-stat-syscall scall cdir table)
-  (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
   (values (sc-stat (if (absolute-path? fname)
       	  	       fname
@@ -176,7 +193,7 @@
 	  #f table))
 
 (define (parse-fstat-syscall scall cdir table)
-  (define fd (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
   (values (sc-stat (lookup-file-descriptor table fd 'parse-fstat-syscall))
   	   #f table))
@@ -184,10 +201,11 @@
 
 ;; fstatat
 (define (parse-fstatat-syscall scall cdir table)
-  (define is (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")")))
-  (define fd (read is))
-  (define fname (string-trim (string-trim (read is) ",") #:repeat? #t))
- 
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+
+  (define fd (car args))
+  (define fname (cadr args))
+  
   (values (sc-stat (maybe-create-absolute-path fname fd cdir table 'parse-fstatat-syscall))
 	  #f table))
 
@@ -217,7 +235,7 @@
   (parse-fcntl-args expr table (syscall-retval scall))) 
 
 (define (parse-readlink-syscall scall cdir table)
-  (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
   (values (sc-readlink (if (absolute-path? fname)
   	  	       	   fname
@@ -225,24 +243,24 @@
           #f table))
 
 (define (parse-readlinkat-syscall scall cdir table)
-  (define is (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")")))
-  (define fd (read is))
-  (define fname (string-trim (string-trim (read is) ",") #:repeat? #t))
-
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+  (define fd (car args))
+  (define fname (cadr args))
+  
   (values (sc-readlink (maybe-create-absolute-path fname fd cdir table 'parse-readlinkat-syscall))
           #f table))
 
-(define (parse-setxattr-syscall scall cdir table)  
-  (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+(define (parse-setxattr-syscall scall cdir table)
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
   (values (sc-setxattr (if (absolute-path? fname)
       	  	       	   fname
       			   (path->complete-path fname cdir)))
           #f table))
 
-(define (parse-fsetxattr-syscall scall cdir table)  
-  (define fd (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
-
+(define (parse-fsetxattr-syscall scall cdir table)
+  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  
   (values (sc-setxattr (lookup-file-descriptor-error table fd 'parse-fsetxattr-syscall))
    	  #f table))
 
@@ -260,7 +278,7 @@
   (values (sc-chown fname) #f table))
 
 (define (parse-chmod-syscall scall cdir table)
-  (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
   (values (sc-chmod (if (absolute-path? fname)
    	   	     	fname
@@ -268,8 +286,8 @@
 	   #f table))
 
 (define (parse-fchmod-syscall scall cdir table)
-  (define fd (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
-
+  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  
   (values (sc-chmod (lookup-file-descriptor table fd 'parse-fchmod-syscall))
 	  #f table))
 
@@ -383,7 +401,7 @@
           #f table))
 
 (define (parse-unlink-syscall scall cdir table)
-  (define fname (read (open-input-string (string-trim (string-trim (syscall-args scall) "(") ")"))))
+  (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
   (values (sc-unlink (if (absolute-path? fname)
   	  	     	 fname
