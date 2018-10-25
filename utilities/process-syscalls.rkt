@@ -1,12 +1,13 @@
-#lang errortrace racket
+#lang racket
 
-(require parsack
+(require parser-tools/lex
+	 (prefix-in : parser-tools/lex-sre)
 	 c/parse
 	 c/ast)
 
-(provide dispatch
-	 inputs-outputs
+(provide process-in-out-pid
 	 (struct-out syscall))
+
 
 (struct syscall (name args retval))
 (struct sc-open (file read? write? retval))
@@ -22,6 +23,7 @@
 (struct sc-symlink (name))
 (struct sc-rename (old new))
 (struct sc-unlink (name))
+(struct sc-fork (pid))
 
 (define files-to-ignore (list "/dev/tty")) ;; add more here
 
@@ -30,30 +32,41 @@
 
 (define (lookup-file-descriptor-error table fd func)
   (hash-ref table fd (lambda ()
-  	    	       (error func "Did not find file descriptor ~a" fd))))
+                       (error func "Did not find file descriptor ~a" fd))))
 
 (define (maybe-create-absolute-path fname fd cdir table func)
   (cond
    [(absolute-path? fname)
     fname]
-   [(equal? fd 'AT_FDCWD)
+   [(equal? fd "AT_FDCWD")
     (path->complete-path fname cdir)]
    [else
     (path->complete-path fname  (lookup-file-descriptor-error table fd func))]))
 
+(define get-string-token
+    (lexer
+     [(:~ #\" #\\) (cons (car (string->list lexeme))
+                         (get-string-token input-port))]
+     [(:: #\\ #\\) (cons #\\ (get-string-token input-port))]
+     [(:: #\\ #\") (cons #\" (get-string-token input-port))]
+     [#\" null]))
 
 ;; dumb lexer; can't handle comma's inside of parens
 (define arg-lexer
   (lexer
    [(eof) ""]
    [whitespace (arg-lexer input-port)]
+   [#\" (string-append
+   	  (list->string (get-string-token input-port))
+   	  (arg-lexer input-port))]
    [#\, ""]
    [any-char (string-append lexeme (arg-lexer input-port))]))
 
 (define (args-parser n ip)
   (cond
     [(> n 0)
-     (cons (arg-lexer ip)
+     (define tmp (arg-lexer ip))
+     (cons tmp
            (args-parser (- n 1) ip))]
     [else
      '()]))
@@ -83,23 +96,8 @@
    [else
     (error 'parse-open-args "Did not match ~a" args)]))
 
-(define (parse-openat-args args)
-  (match args
-   [(expr:begin _ (expr:int __ val q) (expr:string src str w?))
-    (values val str '())]
-   [(expr:begin _ (expr:ref __ (id:var src name)) (expr:string src2 str w?))
-    (values name str '())]
-   [(expr:begin _ left right)
-    (if (expr:int? right) ;; right is mode which we do not care about
-    	(parse-openat-args left)
-	(call-with-values (lambda () (parse-openat-args left))
-			  (lambda (a b c)
-			    (values a b (parse-flags right)))))]
-   [else
-    (error 'parse-openat-args "Did not match ~a" args)]))
-
 (define (parse-open-syscall scall cdir table)
-  (define fd (string->number (syscall-retval scall)))
+  (define fd (string->number (string-trim (syscall-retval scall))))
   (define-values (fname flags) 
     (parse-open-args (parse-expression (open-input-string (syscall-args scall)))))
 
@@ -131,22 +129,25 @@
          (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path))))
 
 (define (parse-openat-syscall scall cdir table)
-  (define fd (string->number (syscall-retval scall)))
-  (define-values (dirfd fname flags)
-    (parse-openat-args (parse-expression (open-input-string (syscall-args scall)))))
+  (define fd (string->number (string-trim (syscall-retval scall))))
+
+  (define args (args-parser 3 (open-input-string (syscall-args scall))))
+  (define dirfd (car args))
+  (define fname (cadr args))
+  (define flags (string-split "|" (caddr args)))
   
   ;; Figure out if this is a read or write, or both
   (define-values (read? write?)
     (for/fold ([read? #f] [write? #f])
               ([f flags])
       (match f
-       ['O_RDONLY
+       ["O_RDONLY"
 	(values #t write?)]
-       ['O_WRONLY
+       ["O_WRONLY"
 	(values read? #t)]
-       ['O_RDWR
+       ["O_RDWR"
 	(values #t #t)]
-       [(or 'O_CREAT 'O_EXCL)
+       [(or "O_CREAT" "O_EXCL")
 	(values read? #t)]
        [else
 	(values read? write?)])))
@@ -291,19 +292,11 @@
   (values (sc-chmod (lookup-file-descriptor table fd 'parse-fchmod-syscall))
 	  #f table))
 
-(define (parse-fchmodat-args args)
-  (match args
-   [(expr:begin _ (expr:int __ val q) (expr:string src str w?))
-    (values val str)]
-   [(expr:begin _ (expr:ref __ (id:var src name)) (expr:string src2 str w?))
-    (values name str)]	    
-   [(expr:begin _ left right)
-    (parse-fchmodat-args left)]
-   [else
-    (error 'parse-fchmodat-args "Did not match ~a" args)]))
-
 (define (parse-fchmodat-syscall scall cdir table)
-  (define-values (fd fname) (parse-fchmodat-args (parse-expression (open-input-string (syscall-args scall)))))
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+  (define fd (car args))
+  (define fname (cadr args))
+
   (values (sc-chmod (maybe-create-absolute-path fname fd cdir table 'parse-fchmodat-syscall))
 	  #f table))
 
@@ -311,22 +304,12 @@
   (define expr (parse-expression (open-input-string (syscall-args scall))))
   (define-values (fname flags) (parse-access-args expr))
 
-  (values (sc-access fname) #f table))
-
-(define (parse-faccessat-args args)
-  (match args
-   [(expr:begin _ (expr:int __ val q) (expr:string src str w?))
-    (values val str)]
-   [(expr:begin _ (expr:ref __ (id:var src name)) (expr:string src2 str w?))
-    (values name str)]
-   [(expr:begin _ left right)
-    (parse-faccessat-args left)]  ;; we are throwing away mode and flags
-   [else
-    (error 'parse-faccessat-args "Did not match ~a" args)]))
-   
+  (values (sc-access fname) #f table))   
 
 (define (parse-faccessat-syscall scall cdir table)
-  (define-values (fd fname) (parse-faccessat-args (parse-expression (open-input-string (syscall-args scall)))))
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+  (define fd (car args))
+  (define fname (cadr args))
 
   (values (sc-access (maybe-create-absolute-path fname fd cdir table 'parse-faccessat-syscall))
   	  #f table))
@@ -349,19 +332,10 @@
 			(path->complete-path path cdir)))
 	  #f table))
 
-(define (parse-mkdirat-args args)
-  (match args
-   [(expr:begin _ (expr:int __ val q) (expr:string src str w?))
-    (values val str)]
-   [(expr:begin _ (expr:ref __ (id:var src name)) (expr:string src2 str w?))
-    (values name str)]
-   [(expr:begin _ left right)
-    (parse-mkdirat-args left)]
-   [else
-    (error 'parse-mkdirat-args "Did not match ~a" args)]))
-
 (define (parse-mkdirat-syscall scall cdir table)
-  (define-values (fd path) (parse-mkdirat-args (parse-expression (open-input-string (syscall-args scall)))))
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+  (define fd (car args))
+  (define path (cadr args))
   
   (values (sc-mkdir (maybe-create-absolute-path path fd cdir table 'parse-mkdirat-syscall))
   	  #f table))  
@@ -408,23 +382,18 @@
 			 (path->complete-path fname cdir)))
           #f table))
 
-(define (parse-unlinkat-args args)
-  (match args
-   [(expr:begin _ (expr:begin __ (expr:int src1 val q) (expr:string src2 str w?))
-   		  right)
-    (values val str (parse-flags right))]
-   [else
-    (error 'parse-unlinkat-args "Did not match ~a" args)]))
-
 (define (parse-unlinkat-syscall scall cdir table)
-  (define-values (dirfd fname flags)
-    (parse-unlinkat-args (parse-expression (open-input-string (syscall-args scall)))))
-  
-  ;; we don't care about flags here becuase we are just dleeting things either way
+  (define args (args-parser 3 (open-input-string (syscall-args scall))))
+  (define dirfd (car args))
+  (define fname (cadr args))
+  (define flags (caddr args))
 
   (values (sc-unlink (maybe-create-absolute-path fname dirfd cdir table 'parse-unlinkat-syscall))
           #f table))
        
+(define (parse-fork-syscall scall cdir table)
+  (values (sc-fork (string->number (string-trim (syscall-retval scall))))
+  	  #f table))
 
 (define (dispatch scall)
   (match (syscall-name scall)
@@ -470,9 +439,11 @@
 
     ["unlink" parse-unlink-syscall]
     ["unlinkat" parse-unlinkat-syscall]
+
+    ["fork" parse-fork-syscall]
+    ["clone" parse-fork-syscall]
     ;; add more here
     [else
-     ;(printf "Did not match system call ~a\n" (syscall-name scall))
      (lambda (scall cdir table)
        (values #f cdir table))]))
 
@@ -520,7 +491,67 @@
    [else
     (values '() '())]))
 
+(define (parse-syscall scall cdir table)
+ (if (string-prefix? (syscall-retval scall) "-1")
+     (values #f cdir table)
+     ((dispatch scall) scall cdir table)))
+
+;; convert generic system call into specific system call
+;; ignore calls that resulted in an error.
+(define (process-syscalls-pid pid cdir_ table_ syscalls)
+  (cond
+    [(hash-ref syscalls pid #f) =>
+     (lambda (scalls)
+	  (let loop ([cdir cdir_]
+	       	     [table table_]
+	       	     [scs scalls])
+	    (cond
+	     [(empty? scs)
+	      '()]
+	     [else
+	      (define-values (res ndir ntable) (parse-syscall (car scs) cdir table))
+	      (cond
+	       [(or (equal? res #f) (void? res))
+	        (loop (or ndir cdir) ntable (cdr scs))]
+	       [(sc-fork? res)
+	        (define fork-calls (process-syscalls-pid (sc-fork-pid res) cdir ntable syscalls))
+		(define recur (loop (or ndir cdir) ntable (cdr scs)))
+		(if (and fork-calls recur)
+		    (append (cons res fork-calls)
+		    	    recur)
+		    #f)]
+               [else
+	        (define recur (loop (or ndir cdir) ntable (cdr scs)))
+		(if recur
+		    (cons res recur)
+		    #f)])])))]
+    [else
+     #f]))
+
+;; determines what the inputs/outputs are.
+;; also returns ins and outs for pid's created via fork/clone by pid
+;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
+(define (process-in-out-pid pid cdir syscalls)
+  (define calls (process-syscalls-pid pid cdir (make-hash) syscalls))
+  (if calls
+    (for/fold ([in '()]
+               [out '()])
+              ([call calls])
+
+      (define-values (is os) (inputs-outputs call))
+
+      (values (append (filter (lambda (x)
+     	     	     	        (not (member x in))) is)
+	              in)
+	      (append (filter (lambda (x)
+	     	     	        (not (member x out))) os)
+		      out)))
+    (values #f #f)))
+
+        
+  
+
+
 
 
   
-
