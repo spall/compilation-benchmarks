@@ -184,7 +184,7 @@
   #:mutable #:transparent)
 
 (define (create-rusage-data cmd)
-  (rusage-data (get-edge-id) #f cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
+  (rusage-data -1 #f cmd #f #f #f #f #f #f #f #f #f #f #f #f #f #f #f))
 
 (define (all-fields-set? rds)
   (andmap identity

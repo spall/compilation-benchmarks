@@ -1,7 +1,6 @@
 #lang errortrace racket/base
 
-(require "system_calls/process-syscalls.rkt"
-         "system_calls/system_calls.rkt"
+(require "process-syscalls.rkt"
          parser-tools/lex
          parser-tools/yacc
          syntax/readerr

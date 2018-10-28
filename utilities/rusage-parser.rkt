@@ -1,4 +1,4 @@
-#lang errortrace racket/base
+#lang racket/base
 
 (require racket/match
          racket/string
@@ -143,7 +143,8 @@
         (error 'process-finished-target "Car of dirs is ~a is a list" dirs-local))
       
       (set-target-mfile! t (car dirs-local))
-      
+      (set-target-data! t 0)      
+
       (unless (empty? submakes-local)
         (set-submake-depth! (car submakes-local) (- (submake-depth (car submakes-local)) 1))
         (when (= 0 (submake-depth (car submakes-local)))
@@ -210,7 +211,9 @@
         [`("File" ,target "was" "considered" "already." . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Was considered already")
-         (process-finished-target)
+         
+	 (process-finished-target)
+
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
@@ -220,8 +223,9 @@
         [`("No" "need" "to" "remake" "target" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "No need to remake")
-         
+		         
          (process-finished-target)
+
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
@@ -245,7 +249,7 @@
 	 (add-target-to-makegraph mgraph ntarget)
 
          ;; add data to target
-         (set-target-data! ntarget (list 0))
+         (set-target-data! ntarget 0)
          
          (if (car prqs?-local)
              (add-dependency t ntarget)
@@ -340,7 +344,7 @@
         [`("Considering" "target" "file" ,target . ,rest)
          (define tname (clean-target-name target))
          ;; considering a new target.  MIGHT need to create a new target structure.
-        
+	 
          (define ntarget (create-target tname))
 
          ;; increase submake depth by 1
@@ -374,7 +378,8 @@
                  (unless (= n (shcall-n (car shcalls-local)))
                    (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
                  (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
-                 (set-rusage-data-pid! info pid)
+                 (set-rusage-data-id! info n)
+		 (set-rusage-data-pid! info pid)
 		 (set-rusage-data-dir! info (shcall-dir (car shcalls-local)))
                  (cond
                    [(shcall-duplicate? (car shcalls-local)) ;; if this is a submake ignore it
@@ -412,8 +417,9 @@
                     (set-target-mfile! shcall-target "top") ;; this is probably wrong
                     (set-target-data! shcall-target info)
                     (add-target-to-makegraph mgraph shcall-target)
+		    
                     (add-recipe t shcall-target)
-                    
+
                     (read-file (struct-copy state st
                                             [shcalls (cdr shcalls-local)]))])]
                 [else
@@ -454,6 +460,7 @@
                  (unless (= 0 (submake-depth (car submakes-local)))
                    (error 'parse-line "~a depth is ~a not zero" argv-cmd (submake-depth (car submakes-local))))
                  (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
+		 (set-rusage-data-id! info n)
                  (set-rusage-data-pid! info pid)
                  (define cdir (car rest))
 		 (set-rusage-data-dir! info cdir)
@@ -486,7 +493,7 @@
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
                     (set-rusage-data-submake?! info #t)
-                    (set-target-data! tmp-FAKE (list (- etmp stmp) info))
+                    ;(set-target-data! tmp-FAKE (list (- etmp stmp) info))
                     
                     (add-recipe t tmp-FAKE)]
                    [else

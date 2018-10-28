@@ -56,7 +56,7 @@
     [(number? data)
      data]
     [else
-     (error 'leaf-node-work "Unrecognized data ~a" data)]))
+     (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
 
 (define (non-leaf-node-work node)
   (for/sum ([e (reverse (target-out-edges node))])
