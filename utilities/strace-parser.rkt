@@ -109,7 +109,7 @@
     (when (hash-has-key? scalls pid)
       (error 'parse-strace "Already have processed syscalls for pid ~a" pid))
     
-    (hash-set! scalld pid (parse-file f)))
+    (hash-set! scalls pid (parse-file f)))
 
   scalls)
 
