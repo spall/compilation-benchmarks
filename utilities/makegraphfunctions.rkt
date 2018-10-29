@@ -5,7 +5,7 @@
          racket/match
          "makegraph.rkt"
          "flags.rkt"
-         "system_calls/process-syscalls.rkt")
+         "process-syscalls.rkt")
 
 (provide get-targets
 	 get-last-edge
