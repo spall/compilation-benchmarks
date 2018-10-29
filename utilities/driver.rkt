@@ -1,10 +1,10 @@
-#lang errortrace racket
+#lang racket
 
 (require racket/cmdline
          racket/list
          "rusage-parser.rkt"
          "strace-parser.rkt"
-         "system_calls/process-syscalls.rkt"
+         "process-syscalls.rkt"
          "makegraphfunctions.rkt"
          "build-new-graph.rkt"
          "makegraph.rkt"
@@ -13,9 +13,6 @@
 (define create-dotfile? (make-parameter #f)) 
 (define rusage? (make-parameter #f)) ;; is there rusage data?
 (define rusage-dir? (make-parameter #f)) ;; is path a directory with rusage data files?
-(define racket? (make-parameter #f)) ;; build graph of racket modules built during raco setup portion of build
-(define nd? (make-parameter #f))
-(define time-target? (make-parameter #f))
 (define work? (make-parameter #f))
 (define span? (make-parameter #f))
 (define pspeed? (make-parameter #f))
@@ -23,6 +20,7 @@
 (define strace? (make-parameter #f))
 (define new-graph? (make-parameter #f))
 (define run-new-graph? (make-parameter #f))
+(define dry-run-graph? (make-parameter #f))
 
 (define file-path
   (command-line
@@ -30,9 +28,6 @@
    [("-d" "--dotfile") df
     "Produce a graphviz dot file"
     (create-dotfile? df)]
-   [("-t" "--target-time") tname
-    "Print target time for target with provided name"
-    (time-target? tname)]
    [("-w" "--work")
     "Print work for make"
     (work? #t)]
@@ -45,15 +40,15 @@
    [("--parallel-slackness") pcount
     "Calculates parallel slackness with provided processor count"
     (slackness? pcount)]
-   [("-m" "--modules-graph")
-    "Build graph of racket modules build during build"
-    (racket? #t)]
    [("--strace-data") stfile
     "Parse strace data and connect with build graph"
     (strace? stfile)]
    [("--new-graph")
     "rebuilds graph using strace data"
     (new-graph? #t)]
+   [("--dry-run-graph")
+    "prints commands that would be run when building graph" 
+    (dry-run-graph? #t)]
    [("--run-new-graph")
     "rebuilds graph using strace data and then runs it"
     (run-new-graph? #t)]
@@ -62,9 +57,6 @@
    [("-r" "--rusage-data")
     "Parse make output with rusage data"
     (rusage? #t)]
-   [("-n" "--dry-run-output")
-    "Parse output from 'make -nd'"
-    (nd? #t)]
    [("--rusage-dir")
     "Provided path is to directory with rusage files in it"
     (rusage-dir? #t)]
@@ -114,36 +106,55 @@
        [else
         (error 'driver "Expected '--rusage-data' flag")]))
    
-   (define syscall-info (when (strace?)
-                          (printf "Parsing strace\n")
-                          (parse-strace (strace?))))
+   (define syscall-info 
+     (when (strace?)
+       (printf "Parsing strace\n")
+       (parse-strace (strace?))))
    
-   (when (work?)
-     (define w (work (makegraph-root graph)))
-     (printf "Work is ~a\n" w))
+   (define work_ (if (work?)
+                     (work (makegraph-root graph))
+		     #f))
+   (when work_
+     (printf "Work for original graph is ~a\n" work_))
    
-   (when (span?)
-     (define s (span (makegraph-root graph)))
-     (printf "span is ~a\n" s))
+   (define span_ (if (span?)
+                     (span (makegraph-root graph))
+		     #f))
+   (when span_
+     (printf "Span for original graph is ~a\n" span_))
    
-   (when (and (span?) (work?))
-     (define parallelism (/ (work (makegraph-root graph))
-                            (span (makegraph-root graph))))
-     (printf "parallelism is ~a\n" parallelism))
+   (define parallelism_ (if (and work_ span_)
+     	                    (/ work_ span_)
+			    #f))
+   (when parallelism_
+     (printf "Parallelism for original graph is ~a\n" parallelism_))
 
-   
+
    (when (or (new-graph?) (run-new-graph?))
      (define new-graph (build-new-graph graph syscall-info))
-     (when (work?)
-       (printf "Work for new graph is ~a\n" (work (makegraph-root new-graph))))
-     (when (span?)
-       (printf "Span for new graph is ~a\n" (span (makegraph-root new-graph))))
-     (when (and (span?) (work?))
-       (define parallelism (/ (work (makegraph-root new-graph))
-                              (span (makegraph-root new-graph))))
-       (printf "parallelism is ~a\n" parallelism))
+
+     (define nwork_ (if (work?)
+     	     	        (work (makegraph-root new-graph))
+			#f))
+     (when nwork_
+       (printf "Work for new graph is ~a\n" nwork_))
+
+
+     (define nspan_ (if (span?)
+     	     	    	(span (makegraph-root new-graph))
+			#f))
+     (when nspan_
+       (printf "Span for new graph is ~a\n" nspan_))
+
+     (define nparallelism_ (if (and nwork_ nspan_)
+     	     		       (/ nwork_ nspan_)
+			       #f))
+     (when nparallelism_
+       (printf "Parallelism for new graph is ~a\n" nparallelism_))
+
 
      (when (run-new-graph?)
+       (printf "Running new graph\n")
        (run-graph-sequential new-graph)))
    
    (when (pspeed?)
