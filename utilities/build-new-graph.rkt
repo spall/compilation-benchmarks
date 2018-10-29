@@ -4,9 +4,12 @@
          racket/sequence
 	 "makegraph.rkt"
 	 "makegraphfunctions.rkt"
-	 "system_calls/process-syscalls.rkt")
+	 "process-syscalls.rkt")
 
 (provide build-new-graph)
+
+(define RUNNING 0)
+(define NOT-RUNNING 0)
 
 (define (intersect? ls1 ls2)
   (cond
@@ -33,7 +36,7 @@
 (define (build-new-leaf t syscalls)  
   ;; 4. create copy of target
   (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() (target-data t)))
-  ;; throw away in edges
+  ;; throw away in edges  
 
   (define data (target-data t))
   (define-values (ins outs)
@@ -42,7 +45,7 @@
        (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
       [else ;; no info
        (values #f #f)]))
-  
+
   (values nt ins outs))
   
 (define (build-new-non-leaf t syscalls)
@@ -94,6 +97,8 @@
   (define rep-outs (make-hash))
   (define all-ins? #t)
   (define all-outs? #t)
+
+  (define die? #f)
   
   (define-values (new-deps new-recipes)
     (let process-reps ([cr '()]
@@ -124,11 +129,12 @@
             
             (values cans (cons cants rr))]
            [else ;; can't move antyhing
-            (values '() (cons cr rr))])]
+	    (values '() (cons cr rr))])]
         [else ;; compare (car rs) to each thing in cr
          (define-values (nt ins outs)
            (build-new-target (edge-end (car rs)) syscalls))
          
+	 
          (cond
            [(and nt ins outs) ;; enough information to move 
             (hash-set! rep-ins (target-id nt) ins)
@@ -147,7 +153,7 @@
                      (call-with-values
                       (lambda () (loop (cdr crs)))
                       (lambda (can cant)
-                        (if (intersect? outs is) ;; can't move
+		        (if (intersect? outs is) ;; can't move
                             (values can (cons (car crs) cant))
                             (values (cons (car crs) can) cant)))))]
                   [else ;; no info for this one
@@ -157,20 +163,20 @@
             
             ;; have determined what can run in parallel with (car rs)
             ;; and have determined what cant run in parallel with (car rs)
-            
             (process-reps (cons nt cans)
                           (cons cants rr)
                           (cdr rs))]
            [nt ;; not enough information to move
+	    
             (set! all-ins? #f) (set! all-outs? #f)
             (process-reps (list nt)
                           (cons cr rr)
                           (cdr rs))]
            [else ;; target didn't do anything so ignore it
+ 	    (printf "Recipe <~a,~a> did not do anything so deleting from graph\n" (target-name (edge-end (car rs))) (target-mfile (edge-end (car rs))))
             (process-reps cr rr (cdr rs))])])))
 
   ;; have new deps if there are any and have new recipe ordering
-
   (for ([nd new-deps])
     (add-dependency nt nd))
 
@@ -187,10 +193,17 @@
          (add-recipe nt tmp)])))
 
   ;; done
-  (values nt (and all-ins? dins (append dins
+  (if (empty? (target-out-edges nt))
+      (begin (printf "this non leaf node <~a,~a> is now a leaf\n" (target-name nt) (target-mfile nt))
+      (values #f (and all-ins? dins (append dins
                                        (sequence->list (in-hash-values rep-ins))))
           (and all-outs? douts (append douts
                                        (sequence->list (in-hash-values rep-outs))))))
+
+  (values nt (and all-ins? dins (append dins
+                                       (sequence->list (in-hash-values rep-ins))))
+          (and all-outs? douts (append douts
+                                       (sequence->list (in-hash-values rep-outs)))))))
 
 (define (leaf? t)
   (empty? (target-out-edges t)))
@@ -202,11 +215,18 @@
 (define (build-new-target t syscalls)
   (cond
     [(nothing-target? t)
+     (set! NOT-RUNNING (+ 1 NOT-RUNNING))
      (values #f '() '())]  ;; target didn't do anything; so just delete it
     [(leaf? t)
+     (set! RUNNING (+ 1 RUNNING))
      (build-new-leaf t syscalls)]
     [else
-     (build-new-non-leaf t syscalls)]))
+     (define-values (a b c)
+       (build-new-non-leaf t syscalls))
+     (if a
+     	 (set! RUNNING (+ 1 RUNNING))
+	 (set! NOT-RUNNING (+ 1 NOT-RUNNING)))
+     (values a b c)]))
 
 (define (build-new-graph graph syscalls)
   (define-values (nroot _ __)
@@ -215,4 +235,6 @@
   (unless nroot
     (error 'build-new-graph "Did not create new root target!"))
 
+  (printf "RUNNING is ~a\n" RUNNING)
+  (printf "NOT-RUNNING is ~a\n" NOT-RUNNING)
   (create-makegraph nroot))
