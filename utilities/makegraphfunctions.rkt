@@ -5,10 +5,10 @@
          racket/match
          "makegraph.rkt"
          "flags.rkt"
-         "process-syscalls.rkt")
+         "process-syscalls.rkt"
+	 racket/hash)
 
-(provide get-targets
-	 get-last-edge
+(provide get-last-edge
          create-dotfile-string
          print-all-targets-and-mfiles
          collapse-targets
@@ -22,6 +22,10 @@
 	 longest-leaf         
          print-graph)
 
+(define (hash-add h1 h2)  
+  (for ([(key value) (in-hash h2)])
+    (hash-set! h1 key value)))
+
 (define (get-last-edge t)
   (cond
     [(empty? (target-out-edges t))
@@ -29,73 +33,129 @@
     [else
      (car (target-out-edges t))]))
 
-;; return a list of possible targets
-(define (get-targets graph tname)
-  (define targets (makegraph-targets graph))
-  (for/fold ([tgs '()])
-            ([val (in-hash-keys targets)])
-    (if (equal? (target-name val) tname)
-        (cons val tgs)
-        tgs)))
-
 (define (leaf-node? node)
   (empty? (target-out-edges node)))
 
-(define (work node)
-  (cond
-    [(leaf-node? node)
-     (leaf-node-work node)]
-    [else
-     (non-leaf-node-work node)]))
+(define (work build)
+  (for/sum ([graph (buildgraph-makegraphs build)])
+    (work-graph graph)))
 
-(define (leaf-node-work node)
-  (define data (target-data node))
-  (cond
-    [(rusage-data? data)
-     (rusage-data-elapsed data)]
-    [(number? data)
-     data]
-    [else
-     (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
+(define (work-graph graph)
+  (define visited (make-hash))
+  (define cache (make-hash))  
 
-(define (non-leaf-node-work node)
-  (for/sum ([e (reverse (target-out-edges node))])
-    (define n (edge-end e))
-    (work n)))
+  (define (node-work node-id)
+    (define node (get-target graph node-id))
+    (cond
+      [(and (hash-ref visited node-id #f)
+      	    (or (target-phony? node) (equal? target-type 'name)))
+       (hash-ref cache node-id)]
+      [(hash-ref visited node-id #f)
+       0]
+      [else
+       (define node (get-target graph node-id))
+       (hash-set! visited node-id #t)
+       (define tmp (if (leaf-node? node)
+       	               (leaf-node-work node)
+	               (non-leaf-node-work node)))
+       (hash-set! cache node-id tmp)
+       tmp]))
 
-;; Span(root) = longest time down deps path + sum of times of recipes paths
-(define (span node)
-  (cond
-    [(leaf-node? node)
-     (leaf-node-span node)]
-    [else
-     (non-leaf-node-span node)]))
+  (define (leaf-node-work node)
+    (define data (target-data node))
+    (cond
+      [(rusage-data? data)
+       (rusage-data-elapsed data)]
+      [(number? data)
+       data]
+      [else
+       (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
 
-(define (leaf-node-span node)
-  (define data (target-data node))
-  (cond
-    [(rusage-data? data)
-     (rusage-data-elapsed data)]
-    [(number? data)
-     data]
-    [else
-     (error 'leaf-node-span "Unrecognized data ~a" data)]))
+  (define (non-leaf-node-work node)
+    (for/sum ([e (reverse (target-out-edges node))])
+      (node-work (edge-end e))))
 
-(define (non-leaf-node-span node)
-  (define-values (m s)
-    (for/fold ([max_ 0]
-               [sum 0])
-              ([e (reverse (target-out-edges node))])
-      (define n (edge-end e))
-      (define tmpspan (span n))
-      
+  (node-work (makegraph-root graph)))
+
+(define (span build)
+  (for/sum ([graph (buildgraph-makegraphs build)])
+    (span-graph graph)))
+
+(define (span-graph graph)
+  (define cache (make-hash))  
+
+  (define (node-span node-id ancestors)
+    (define node (get-target graph node-id))
+    (cond
+     [(and (hash-ref ancestors node-id #f)
+           (or (target-phony? node) (equal? target-type 'name)))
+      (values (hash-ref cache node-id) (hash-set ancestors node-id #t))]
+     [(hash-ref ancestors node-id #f)
+      (values 0 ancestors)]
+     [(hash-ref cache node-id #f) =>
+      (lambda (val)
+      (values val (hash-set ancestors node-id #t)))]
+     [else
       (cond
-        [(equal? 'dep (edge-type e))
-         (values (max max_ tmpspan) sum)]
+        [(leaf-node? node)
+	 (define tmp (leaf-node-span node))
+	 (hash-set! cache node-id tmp)
+         (values tmp (hash-set ancestors node-id #t))]
         [else
-         (values max_ (+ sum tmpspan))])))
-  (+ m s))
+	 (define-values (tmp a) (non-leaf-node-span node (hash-set ancestors node-id #t)))
+	 (hash-set! cache node-id tmp)
+	 (values tmp a)])]))
+       
+  (define (leaf-node-span node)
+    (define data (target-data node))
+    (cond
+      [(rusage-data? data)
+       (rusage-data-elapsed data)]
+      [(number? data)
+       data]
+      [else
+       (error 'leaf-node-span "Unrecognized data ~a" data)]))
 
+  (define (non-leaf-node-span node ancestors)
+    (define-values (m s a) ;; m is span of dependencies and s is sum of span of recipes
+      (for/fold ([max_ 0]
+                 [sum 0]
+		 [ancestors_ ancestors])
+                ([e (reverse (target-out-edges node))])
+        (define nid (edge-end e))
+	(cond
+	  [(equal? 'dep (edge-type e))
+	   (define-values (span_ a) (node-span nid ancestors))
+	   (values (max max_ span_) sum (merge-ancestors ancestors_ a))]
+	  [else
+           (define-values (span_ a) (node-span nid ancestors_))
+	   (values max_ (+ sum span_) a)])))
+
+    (values (+ m s) a))
+
+  (define-values (val _) (node-span (makegraph-root graph) (hash)))
+  val)
+
+#|
+(define (all-paths graph)
+  (define startnode (get-target (makegraph-targets) (makegraph-root graph)))
+
+  (define (all-paths-leaf-node node)
+    ;; only one path...
+    (define data (target-data node))
+    (cond
+      [(rusage-data? data)
+       (list (rusage-data-elapsed data))]
+      [(number? data)
+       (list data)]
+      [else
+       (error 'all-paths-leaf-node "Did not recognize data ~a" data)]))
+
+  (define (all-paths-non-leaf-node node)
+  |#  
+
+(define (merge-ancestors h1 h2)
+  (hash-union h1 h2 #:combine/key (lambda (k a b) #t)))
 
 (define (longest-target root_ graph)
   (void)) ;; todo
