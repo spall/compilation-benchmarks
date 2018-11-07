@@ -427,8 +427,8 @@
                     (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-		      (remove-edge t last-edge 'out)
-                      (add-edge tmp-FAKE last-edge 'out 'dep))
+		      (remove-edge t last-edge)
+                      (add-edge tmp-FAKE last-edge 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
@@ -525,8 +525,8 @@
                     (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
                     
                     (for ([last-edge last-edges])
-		      (remove-edge t last-edge 'out)
-                      (add-edge tmp-FAKE last-edge 'out 'dep))
+		      (remove-edge t last-edge)
+                      (add-edge tmp-FAKE last-edge 'dep))
                     
                     ;; add edge from current target to fake target.
                     ;; should be a recipe
