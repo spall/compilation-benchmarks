@@ -78,8 +78,8 @@
      	        [len 0])
 	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
-         (let ([work_ (work (makegraph-root graph))]
-	       [span_ (span (makegraph-root graph))]
+         (let ([work_ (work graph)]
+	       [span_ (span graph)]
 	       [leaf_ (longest-leaf graph)])
 	 (printf "~a ~a ~a\n" work_ span_ leaf_)
 	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
@@ -112,13 +112,13 @@
        (parse-strace (strace?))))
    
    (define work_ (if (work?)
-                     (work (makegraph-root graph))
+                     (work graph)
 		     #f))
    (when work_
      (printf "Work for original graph is ~a\n" work_))
    
    (define span_ (if (span?)
-                     (span (makegraph-root graph))
+                     (span graph)
 		     #f))
    (when span_
      (printf "Span for original graph is ~a\n" span_))
@@ -134,14 +134,14 @@
      (define new-graph (build-new-graph graph syscall-info))
 
      (define nwork_ (if (work?)
-     	     	        (work (makegraph-root new-graph))
+     	     	        (work new-graph)
 			#f))
      (when nwork_
        (printf "Work for new graph is ~a\n" nwork_))
 
 
      (define nspan_ (if (span?)
-     	     	    	(span (makegraph-root new-graph))
+     	     	    	(span new-graph)
 			#f))
      (when nspan_
        (printf "Span for new graph is ~a\n" nspan_))

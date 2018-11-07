@@ -3,18 +3,19 @@
 (require racket/struct)
 
 (provide (struct-out target)
+	 (struct-out targetid)
          (struct-out edge)
          (struct-out makegraph)
          (struct-out rusage-data)
-         (struct-out mnode)
-         (struct-out mgraph)
+	 (struct-out buildgraph)
 
-         create-mnode
-         create-mgraph
-
+	 create-buildgraph
          create-makegraph
          create-target
+	 create-targetid
          create-rusage-data
+	 add-makegraph
+	 get-target
          add-recipe
          add-dependency
          add-edge
@@ -50,17 +51,31 @@
   (for ([d (target-out-edges t)])
     (recur d port)
     (write-string "\n" port))
-  (write-string "In edges:\n" port)
-  (for ([r (target-in-edges t)])
-    (recur r port)
-    (write-string "\n" port))
   (when mode (write-string ">" port)))
 
-;; out edges are recipes and deps; in-edges are edges where this target is the end.
-(struct target (id name mfile out-edges in-edges data)
+;; name is name of target
+;; makefile is absolute path + name of makefile this target was executed from
+;; need this info because different makefiles of different names in same directory 
+;; can have targets with same name
+(struct targetid (name mfile) #:mutable #:transparent)
+
+(define (create-targetid name mfile)
+  (targetid name mfile))
+
+;; out edges are recipes and deps
+(struct target (id name mfile phony? type out-edges data)
   #:methods gen:custom-write
   [(define write-proc target-print)]
   #:mutable #:transparent)
+
+(define (create-target name)
+  (target (get-tid)
+          name
+          #f       ; mfile
+	  #f       ; phony?
+	  'unknown ; type 
+          '()      ; out-edges
+          '()))    ; data
 
 (define (edge-print e port mode)
   (when mode (write-string "<" port))
@@ -80,17 +95,6 @@
   [(define write-proc edge-print)]
   #:mutable #:transparent)
 
-;; mfile children data mdata remake? time
-(struct node (id name deps) #:mutable #:transparent)
-
-(define (create-target name)
-  (target (get-tid)
-          name
-          #f  ; mfile
-          '() ; out-edges
-          '() ; in-edge
-          '())) ; data
-
 (define (insert-edge e ls)
   (cond
     [(empty? ls)
@@ -101,7 +105,7 @@
      (cons (car ls)
            (insert-edge e (cdr ls)))]))
 
-(define (remove-edge t e direction)
+(define (remove-edge t e)
   (define (helper ls)
     (cond
       [(empty? ls)
@@ -111,29 +115,23 @@
       [else
        (cons (car ls) (helper (cdr ls)))]))
   
-  (if (equal? direction 'out)
-      (set-target-out-edges! t (helper (target-out-edges t)))
-      (set-target-in-edges! t (helper (target-in-edges t)))))
+  (set-target-out-edges! t (helper (target-out-edges t))))
 
-(define (add-edge t e direction [t2 #f])
+(define (add-edge t e [t2 #f])
   (when t2
     (set-edge-type! e t2))
 
-  (if (equal? direction 'out)
-      (set-target-out-edges! t (insert-edge e (target-out-edges t)))
-      (set-target-in-edges! t (insert-edge e (target-in-edges t)))))
+  (set-target-out-edges! t (insert-edge e (target-out-edges t))))
 
 ;; adds a recipe edge
-(define (add-recipe t recipe-t)
-  (define tmp (edge recipe-t 'seq (get-edge-id)))
-  (set-target-in-edges! recipe-t (cons tmp (target-in-edges recipe-t)))
-  (set-target-out-edges! t (cons tmp (target-out-edges t))))
+(define (add-recipe add-to tid)
+  (set-target-out-edges! add-to (cons (edge tid 'seq (get-edge-id))
+  			 	      (target-out-edges add-to))))
 
 ;; adds a dependency edge
-(define (add-dependency t dep-t)
-  (define tmp (edge dep-t 'dep (get-edge-id)))
-  (set-target-in-edges! dep-t (cons tmp (target-in-edges dep-t)))
-  (set-target-out-edges! t (cons tmp (target-out-edges t))))
+(define (add-dependency add-to tid)
+  (set-target-out-edges! add-to (cons (edge tid 'dep (get-edge-id))
+  			 	      (target-out-edges add-to))))
 
 ;; ----------------- End of target code ------------------------------
 
@@ -161,13 +159,67 @@
 (define (create-makegraph [root #f])
   (makegraph (make-hash) root))
 
-(define (add-target-to-makegraph graph t)
-  (hash-set! (makegraph-targets graph) t #t))
+(define (shcall-target? tid)
+  (and (string-prefix? (targetid-name tid) "SHCALL")
+       (equal? (targetid-mfile tid) "top"))) 
 
-(define (target-in-graph? graph t)
-  (hash-ref (makegraph-targets graph) t #f))
+(define (add-target-to-makegraph graph tid t)
+  (define targets (makegraph-targets graph))
+
+  (define (has-edge? t1 e)	  
+    (ormap (lambda (e2)
+    	     (cond
+	      [(and (equal? (edge-type e) (edge-type e2))
+	     	    (equal? (edge-end e) (edge-end e2)))
+		#t]
+	      [(and (equal? (edge-type e) (edge-type e2))
+	      	    (shcall-target? (edge-end e)) (shcall-target? (edge-end e2)))
+	       ;; check if they are the same command
+	       (define d3 (target-data (get-target graph (edge-end e))))
+	       (define d4 (target-data (get-target graph (edge-end e2))))
+	       (and (equal? (rusage-data-cmd d3) (rusage-data-cmd d4))
+	       	    (equal? (rusage-data-dir d3) (rusage-data-dir d4)))]
+	      [else
+	       #f]))   	   
+ 	   (target-out-edges t1)))
+
+  (define (same-target? t1 t2)
+   (andmap (lambda (e)
+   	     (if (has-edge? t1 e)
+	         #t
+		 (begin 
+	           (printf "Did not find edge ~a\n" e)
+		   #f)))
+ 	   (target-out-edges t2)))
+
+  (cond
+    [(hash-ref targets tid #f) =>
+     (lambda (tmp)
+       (when (and (not (empty? (target-out-edges t)))
+       	     	  (not (same-target? tmp t))) 
+         (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))))]
+    [else
+     (hash-set! targets tid t)]))
+
+(define (get-target graph tid)
+  (hash-ref (makegraph-targets graph) tid))
+
+(define (target-in-graph? graph tid)
+  (hash-ref (makegraph-targets graph) tid #f))
  
 ;; -------------- end make graph code --------------------------
+
+;; -------------- start build graph code -----------------------
+
+(struct buildgraph (makegraphs) #:mutable #:transparent)
+
+(define (create-buildgraph)
+  (buildgraph '()))
+
+(define (add-makegraph bgraph mgraph)
+  (set-buildgraph-makegraphs! bgraph (append (buildgraph-makegraphs bgraph) (list mgraph))))
+
+;; -------------- end build graph code -------------------------
 
 ;; -------------- structure to represent rusage data -----------
 
@@ -191,23 +243,3 @@
           (reverse (cdr (reverse (struct->list rds))))))
 
 ;; ---------------- end of rusage data code --------------------
-
-;; ---------------- node for racket modules --------------------
-
-(struct mnode (id name deps time) #:mutable #:transparent)
-
-(define (create-mnode name deps)
-  (mnode (get-tid) name deps #f))
-
-;; ---------------- end of module node code --------------------
-
-
-;; ---------------- graph for racket modules -------------------
-
-(struct mgraph (nodes roots) #:mutable #:transparent)
-
-(define (create-mgraph)
-  (mgraph (make-hash) (make-hash)))
-
-;; ---------------- end of racket module graph code ------------
-
