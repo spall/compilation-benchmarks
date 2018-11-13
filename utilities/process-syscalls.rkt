@@ -9,7 +9,7 @@
 	 (struct-out syscall))
 
 
-(struct syscall (name args retval))
+(struct syscall (name args retval) #:prefab)
 (struct sc-open (file read? write? retval))
 (struct sc-execve (file))
 (struct sc-stat (name))
@@ -32,7 +32,7 @@
 
 (define (lookup-file-descriptor-error table fd func)
   (hash-ref table fd (lambda ()
-                       (error func "Did not find file descriptor ~a" fd))))
+                       (error func "Did not find file descriptor ~a in table ~a" fd table))))
 
 (define (maybe-create-absolute-path fname fd cdir table func)
   (cond
@@ -41,7 +41,10 @@
    [(equal? fd "AT_FDCWD")
     (path->complete-path fname cdir)]
    [else
-    (path->complete-path fname  (lookup-file-descriptor-error table fd func))]))
+    (define fdnum (string->number fd))
+    (unless fdnum
+      (error func "Failed to parse fd as a number ~a" fd))
+    (path->complete-path fname  (lookup-file-descriptor-error table fdnum func))]))
 
 (define get-string-token
     (lexer
@@ -130,6 +133,8 @@
 
 (define (parse-openat-syscall scall cdir table)
   (define fd (string->number (string-trim (syscall-retval scall))))
+  (unless fd
+    (error 'parse-openat-syscall "Failed to parse return value as number ~a" (string-trim (syscall-retval scall))))
 
   (define args (args-parser 3 (open-input-string (syscall-args scall))))
   (define dirfd (car args))
@@ -194,7 +199,10 @@
 	  #f table))
 
 (define (parse-fstat-syscall scall cdir table)
-  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  (define args (args-parser 1 (open-input-string (syscall-args scall))))
+  (define fd (string->number (car args)))
+  (unless fd
+    (error 'parse-fstat-syscall "Failed to parse fd as a number ~a" (car args)))   
   
   (values (sc-stat (lookup-file-descriptor table fd 'parse-fstat-syscall))
   	   #f table))
@@ -203,7 +211,6 @@
 ;; fstatat
 (define (parse-fstatat-syscall scall cdir table)
   (define args (args-parser 2 (open-input-string (syscall-args scall))))
-
   (define fd (car args))
   (define fname (cadr args))
   
@@ -223,6 +230,9 @@
 	  	  	     'O_APPEND) #f table)]  
 	 [else
 	  (values #f #f table)])]
+       ['F_DUPFD
+        (values (sc-fcntl (lookup-file-descriptor table val 'parse-fcntl-args)
+			  'F_DUPFD) #f (hash-set table retval (lookup-file-descriptor table val 'parse-fcntl-args)))]
        [else
         (values #f #f table)])]                  
      [(expr:begin _ left right)
@@ -233,7 +243,7 @@
 
 (define (parse-fcntl-syscall scall cdir table)
   (define expr (parse-expression (open-input-string (syscall-args scall))))
-  (parse-fcntl-args expr table (syscall-retval scall))) 
+  (parse-fcntl-args expr table (string->number (string-trim (syscall-retval scall))))) 
 
 (define (parse-readlink-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
@@ -260,7 +270,10 @@
           #f table))
 
 (define (parse-fsetxattr-syscall scall cdir table)
-  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  (define args (args-parser 1 (open-input-string (syscall-args scall))))
+  (define fd (string->number (car args)))
+  (unless fd
+    (error 'parse-fsetxattr-syscall "Failed to parse fd as a number ~a" (car args)))
   
   (values (sc-setxattr (lookup-file-descriptor-error table fd 'parse-fsetxattr-syscall))
    	  #f table))
@@ -287,7 +300,10 @@
 	   #f table))
 
 (define (parse-fchmod-syscall scall cdir table)
-  (define fd (car (args-parser 1 (open-input-string (syscall-args scall)))))
+  (define args (args-parser 1 (open-input-string (syscall-args scall))))
+  (define fd (string->number (car args)))
+  (unless fd
+    (error 'parse-fchmod-syscall "Failed to parse fd as a number ~a" (car args)))
   
   (values (sc-chmod (lookup-file-descriptor table fd 'parse-fchmod-syscall))
 	  #f table))
@@ -392,6 +408,7 @@
           #f table))
        
 (define (parse-fork-syscall scall cdir table)
+	(printf "parsing fork; pid is ~a\n" (syscall-retval scall))
   (values (sc-fork (string->number (string-trim (syscall-retval scall))))
   	  #f table))
 
@@ -442,8 +459,10 @@
 
     ["fork" parse-fork-syscall]
     ["clone" parse-fork-syscall]
+    ["vfork" parse-fork-syscall]
     ;; add more here
     [else
+     (printf "didn't match ~a\n" (syscall-name scall))
      (lambda (scall cdir table)
        (values #f cdir table))]))
 
@@ -493,15 +512,18 @@
 
 (define (parse-syscall scall cdir table)
  (if (string-prefix? (syscall-retval scall) "-1")
-     (values #f cdir table)
+     (begin (printf "~a failed\n" (syscall-name scall))
+     (values #f cdir table))
      ((dispatch scall) scall cdir table)))
 
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
 (define (process-syscalls-pid pid cdir_ table_ syscalls)
+  (printf "processing syscalls for pid ~a\n" pid)
   (cond
     [(hash-ref syscalls pid #f) =>
      (lambda (scalls)
+     	  
 	  (let loop ([cdir cdir_]
 	       	     [table table_]
 	       	     [scs scalls])
@@ -509,11 +531,15 @@
 	     [(empty? scs)
 	      '()]
 	     [else
+	      (when (= pid 66689)
+	        (printf "parsing syscall ~a\n" (syscall-name (car scs))))
 	      (define-values (res ndir ntable) (parse-syscall (car scs) cdir table))
 	      (cond
 	       [(or (equal? res #f) (void? res))
 	        (loop (or ndir cdir) ntable (cdr scs))]
 	       [(sc-fork? res)
+	        (when (or (= pid 66689) (= pid 66690) (= pid 66691))
+		  (printf "processing ~a fork for pid ~a\n" pid (sc-fork-pid res)))
 	        (define fork-calls (process-syscalls-pid (sc-fork-pid res) cdir ntable syscalls))
 		(define recur (loop (or ndir cdir) ntable (cdr scs)))
 		(if (and fork-calls recur)
@@ -532,13 +558,20 @@
 ;; also returns ins and outs for pid's created via fork/clone by pid
 ;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
 (define (process-in-out-pid pid cdir syscalls)
-  (define calls (process-syscalls-pid pid cdir (make-hash) syscalls))
+  (define calls (process-syscalls-pid pid cdir (hash) syscalls))
+  (when (= pid 66689)
+    (printf "length of calls is ~a\n" (length calls))
+    (printf "calls are ~a\n" calls)
+   )
   (if calls
     (for/fold ([in '()]
                [out '()])
               ([call calls])
 
       (define-values (is os) (inputs-outputs call))
+      (when (= pid 66689)
+        (printf "is is ~a\n" is)
+	(printf "os is ~a\n" os))
 
       (values (append (filter (lambda (x)
      	     	     	        (not (member x in))) is)
