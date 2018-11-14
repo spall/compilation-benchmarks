@@ -408,7 +408,6 @@
           #f table))
        
 (define (parse-fork-syscall scall cdir table)
-	(printf "parsing fork; pid is ~a\n" (syscall-retval scall))
   (values (sc-fork (string->number (string-trim (syscall-retval scall))))
   	  #f table))
 
@@ -462,7 +461,6 @@
     ["vfork" parse-fork-syscall]
     ;; add more here
     [else
-     (printf "didn't match ~a\n" (syscall-name scall))
      (lambda (scall cdir table)
        (values #f cdir table))]))
 
@@ -510,16 +508,17 @@
    [else
     (values '() '())]))
 
+(define SPECIAL (list "unlink" "unlinkat" "rm" "rmdir" "rename"))
+
 (define (parse-syscall scall cdir table)
- (if (string-prefix? (syscall-retval scall) "-1")
-     (begin (printf "~a failed\n" (syscall-name scall))
-     (values #f cdir table))
+ (if (and (string-prefix? (syscall-retval scall) "-1")
+     	  (not (member (syscall-name scall) SPECIAL)))
+     (values #f cdir table)
      ((dispatch scall) scall cdir table)))
 
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
 (define (process-syscalls-pid pid cdir_ table_ syscalls)
-  (printf "processing syscalls for pid ~a\n" pid)
   (cond
     [(hash-ref syscalls pid #f) =>
      (lambda (scalls)
@@ -531,15 +530,11 @@
 	     [(empty? scs)
 	      '()]
 	     [else
-	      (when (= pid 66689)
-	        (printf "parsing syscall ~a\n" (syscall-name (car scs))))
 	      (define-values (res ndir ntable) (parse-syscall (car scs) cdir table))
 	      (cond
 	       [(or (equal? res #f) (void? res))
 	        (loop (or ndir cdir) ntable (cdr scs))]
 	       [(sc-fork? res)
-	        (when (or (= pid 66689) (= pid 66690) (= pid 66691))
-		  (printf "processing ~a fork for pid ~a\n" pid (sc-fork-pid res)))
 	        (define fork-calls (process-syscalls-pid (sc-fork-pid res) cdir ntable syscalls))
 		(define recur (loop (or ndir cdir) ntable (cdr scs)))
 		(if (and fork-calls recur)
@@ -559,26 +554,19 @@
 ;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
 (define (process-in-out-pid pid cdir syscalls)
   (define calls (process-syscalls-pid pid cdir (hash) syscalls))
-  (when (= pid 66689)
-    (printf "length of calls is ~a\n" (length calls))
-    (printf "calls are ~a\n" calls)
-   )
   (if calls
-    (for/fold ([in '()]
-               [out '()])
-              ([call calls])
+      (for/fold ([in '()]
+                 [out '()])
+                ([call calls])
 
-      (define-values (is os) (inputs-outputs call))
-      (when (= pid 66689)
-        (printf "is is ~a\n" is)
-	(printf "os is ~a\n" os))
-
-      (values (append (filter (lambda (x)
-     	     	     	        (not (member x in))) is)
-	              in)
-	      (append (filter (lambda (x)
-	     	     	        (not (member x out))) os)
-		      out)))
+        (define-values (is os) (inputs-outputs call))
+      
+        (values (append (filter (lambda (x)
+     	     	     	          (not (member x in))) is)
+	                in)
+	        (append (filter (lambda (x)
+	     	     	          (not (member x out))) os)
+		        out)))
     (values #f #f)))
 
         
