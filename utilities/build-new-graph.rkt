@@ -33,24 +33,13 @@
    4. Create a 'seq edge from copy of current target to new fake targets;
    5. return this new target 
 |#
-(define (build-new-leaf t syscalls)  
-  ;; 4. create copy of target
-  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() (target-data t)))
-  ;; throw away in edges  
-
-  (define data (target-data t))
-  (define-values (ins outs)
-    (cond
-      [(hash-ref syscalls (rusage-data-pid data) #f)
-       (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
-      [else ;; no info
-       (values #f #f)]))
-
-  (values nt ins outs))
   
-(define (build-new-non-leaf t syscalls)
+(define (build-new-non-leaf tid graph syscalls new-targets ins-cache outs-cache)
+
   ;; 4. create copy of target
-  (define nt (target (target-id t) (target-name t) (target-mfile t) '() '() #f)) ;; throw away in edges
+  (define t (get-target graph tid))
+  (define nt (target (target-id t) (target-name t) (target-mfile t) (target-phony? t) (target-type t) '() #f))
+  (define ntid (create-targetid (targetid-name tid) (targetid-mfile tid)))
 
   (define-values (deps reps)
     (let split ([es (target-out-edges t)])
@@ -73,11 +62,11 @@
          (values '() '())]
         [else
          (define d (car ds))
-         (define-values (nd ins outs)
-           (build-new-target (edge-end d) syscalls))
+         (define-values (ndid ins outs)
+           (build-new-target (edge-end d) graph syscalls new-targets ins-cache outs-cache))
          
-         (if nd
-             (add-dependency nt nd)
+         (if ndid
+             (add-dependency nt ndid)
              (printf "Dependency <~a,~a> did not do anything so deleting from graph\n" (target-name (edge-end d)) (target-mfile (edge-end d))))
          
          (call-with-values (lambda () (process-deps (cdr ds)))
@@ -110,15 +99,16 @@
            [douts
             (define-values (cans cants)
               (let loop ([crs cr])
+	        
                 (cond
                   [(empty? crs)
                    (values '() '())]
-                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
+                  [(hash-ref rep-ins (car crs) #f) =>
                    (lambda (is)
-                     (call-with-values
+		     (call-with-values
                       (lambda () (loop (cdr crs)))
                       (lambda (can cant)
-                        (if (intersect? douts is) ;; can't move
+		        (if (intersect? douts is) ;; can't move
                             (values can (cons (car crs) cant))
                             (values (cons (car crs) can) cant)))))]
                   [else
@@ -131,14 +121,14 @@
            [else ;; can't move antyhing
 	    (values '() (cons cr rr))])]
         [else ;; compare (car rs) to each thing in cr
-         (define-values (nt ins outs)
-           (build-new-target (edge-end (car rs)) syscalls))
-         
+         (define-values (ntid ins outs)
+           (build-new-target (edge-end (car rs)) graph syscalls new-targets ins-cache outs-cache))
+         (define nt (hash-ref new-targets ntid))
 	 
          (cond
-           [(and nt ins outs) ;; enough information to move 
-            (hash-set! rep-ins (target-id nt) ins)
-            (hash-set! rep-outs (target-id nt) outs)
+           [(and ntid ins outs) ;; enough information to move 
+            (hash-set! rep-ins ntid ins)
+            (hash-set! rep-outs ntid outs)
             
             ;; What does loop do?
             
@@ -148,7 +138,7 @@
                 (cond
                   [(empty? crs)
                    (values '() '())] ;; cans and cants
-                  [(hash-ref rep-ins (target-id (car crs)) #f) =>
+                  [(hash-ref rep-ins (car crs) #f) =>
                    (lambda (is)
                      (call-with-values
                       (lambda () (loop (cdr crs)))
@@ -161,15 +151,16 @@
                                      (lambda (can cant)
                                        (values can (cons (car crs) cant))))])))
             
+	    	    
             ;; have determined what can run in parallel with (car rs)
             ;; and have determined what cant run in parallel with (car rs)
-            (process-reps (cons nt cans)
+            (process-reps (cons ntid cans)
                           (cons cants rr)
                           (cdr rs))]
            [nt ;; not enough information to move
 	    
             (set! all-ins? #f) (set! all-outs? #f)
-            (process-reps (list nt)
+            (process-reps (list ntid)
                           (cons cr rr)
                           (cdr rs))]
            [else ;; target didn't do anything so ignore it
@@ -186,55 +177,95 @@
         [(= 1 (length nrs))
          (add-recipe nt (car nrs))]
         [else
-         (define tmp (create-target (symbol->string (gensym "FAKE"))))
+	 (define tmpid (create-targetid (symbol->string (gensym "FAKE")) (target-mfile nt)))
+         (define tmp (create-target (targetid-name tmpid)))
          (set-target-mfile! tmp (target-mfile nt))
          (for ([nr nrs])
            (add-dependency tmp nr))
-         (add-recipe nt tmp)])))
+	 (hash-set! new-targets tmpid tmp)
+         (add-recipe nt tmpid)])))
 
   ;; done
+  (hash-set! new-targets ntid nt)
+
   (if (empty? (target-out-edges nt))
       (begin (printf "this non leaf node <~a,~a> is now a leaf\n" (target-name nt) (target-mfile nt))
-      (values #f (and all-ins? dins (append dins
-                                       (sequence->list (in-hash-values rep-ins))))
-          (and all-outs? douts (append douts
-                                       (sequence->list (in-hash-values rep-outs))))))
+      (values #f (and all-ins? dins (combine dins rep-ins))
+          (and all-outs? douts (combine douts rep-outs))))
 
-  (values nt (and all-ins? dins (append dins
-                                       (sequence->list (in-hash-values rep-ins))))
-          (and all-outs? douts (append douts
-                                       (sequence->list (in-hash-values rep-outs)))))))
+  (values ntid (and all-ins? dins (combine dins rep-ins))
+  	       (and all-outs? douts (combine douts rep-outs)))))
+
+;; takse a list and a hash table;; collapses hash table and list into one
+(define (combine ls h)
+  (define new (make-hash))
+  (for ([hv (in-hash-values h)])
+    (hash-set! new hv #t))
+  (for ([lv ls])
+    (hash-set! new lv #t))
+
+  (sequence->list (in-hash-keys new)))
 
 (define (leaf? t)
   (empty? (target-out-edges t)))
 
-(define (nothing-target? t)
-  (and (leaf? t)
-       (not (rusage-data? (target-data t)))))
+(define (build-new-graph bgraph syscalls)
+  (define new-bgraph (create-buildgraph))
+  (for ([graph (buildgraph-makegraphs bgraph)])
+    (add-makegraph new-bgraph (build-new-makegraph graph syscalls)))
+  new-bgraph)
 
-(define (build-new-target t syscalls)
+
+
+(define (build-new-leaf tid graph syscalls new-targets)  
+  ;; 4. create copy of target
+  (define new-tid (create-targetid (targetid-name tid) (targetid-mfile tid)))
+  (define t (get-target graph tid))
+ 
+  (hash-set! new-targets new-tid
+    	     (target (target-id t) (target-name t) (target-mfile t) (target-phony? t) (target-type t) '() (target-data t)))
+
+  (define data (target-data t))
+  (define-values (ins outs)
+    (cond
+      [(not (rusage-data? data))
+       (values '() '())]
+      [(hash-ref syscalls (rusage-data-pid data) #f)
+       (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
+      [else ;; no info
+       (values #f #f)]))
+
+  (values new-tid ins outs))
+
+(define (build-new-target tid graph syscalls new-targets ins-cache outs-cache)
+  (define t (get-target graph tid))
   (cond
-    [(nothing-target? t)
-     (set! NOT-RUNNING (+ 1 NOT-RUNNING))
-     (values #f '() '())]  ;; target didn't do anything; so just delete it
+    [(hash-ref new-targets tid #f) ;; we have already rebuilt this target so do nothing
+     (values (create-targetid (targetid-name tid) (targetid-mfile tid))
+       	     (hash-ref ins-cache tid) (hash-ref outs-cache tid))]
     [(leaf? t)
      (set! RUNNING (+ 1 RUNNING))
-     (build-new-leaf t syscalls)]
+     (define-values (new-tid ins outs)
+       (build-new-leaf tid graph syscalls new-targets))
+     (hash-set! ins-cache new-tid ins)
+     (hash-set! outs-cache new-tid outs)
+     (values new-tid ins outs)]
     [else
-     (define-values (a b c)
-       (build-new-non-leaf t syscalls))
-     (if a
-     	 (set! RUNNING (+ 1 RUNNING))
-	 (set! NOT-RUNNING (+ 1 NOT-RUNNING)))
-     (values a b c)]))
+     (define-values (a ins outs)
+       (build-new-non-leaf tid graph syscalls new-targets ins-cache outs-cache))
+     (hash-set! ins-cache a ins)
+     (hash-set! outs-cache a outs)
+     (values a ins outs)]))
 
-(define (build-new-graph graph syscalls)
+
+(define (build-new-makegraph graph syscalls)
+  (define new-graph (create-makegraph))
+  
   (define-values (nroot _ __)
-    (build-new-target (makegraph-root graph) syscalls))
+    (build-new-target (makegraph-root graph) graph syscalls (makegraph-targets new-graph) (make-hash) (make-hash)))
 
   (unless nroot
     (error 'build-new-graph "Did not create new root target!"))
 
-  (printf "RUNNING is ~a\n" RUNNING)
-  (printf "NOT-RUNNING is ~a\n" NOT-RUNNING)
-  (create-makegraph nroot))
+  (set-makegraph-root! new-graph nroot)
+  new-graph)
