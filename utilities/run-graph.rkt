@@ -36,8 +36,7 @@
      [(and (hash-ref already-run tid #f)
      	   (not (target-phony? t))
 	   (not (equal? 'name (target-type t))))
-      (void)
-      #;(printf "Not running target ~a again.\n" tid)]
+      (printf "Not running target ~a again.\n" tid)]
      [(empty? (target-out-edges t))
       (run-leaf-dry t)
       (hash-set! already-run tid #t)]	
@@ -83,8 +82,7 @@
       [(and (hash-ref already-run tid #f)
      	    (not (target-phony? t))
 	    (not (equal? 'name (target-type t))))
-      (void)
-      #;(printf "Not running target ~a again.\n" tid)]
+      (printf "Not running target ~a again.\n" tid)]
       [(empty? (target-out-edges t))
        (run-leaf-sequential t)
        (hash-set! already-run tid #t)]
@@ -121,7 +119,7 @@
 
       (define new-cmd (fix-cmd (rusage-data-cmd (target-data t))))
 
-      (printf "Running CMD: ~a\n" (rusage-data-id (target-data t)))
+      (printf "Running CMD: ~a ; PID: ~a\n" (rusage-data-id (target-data t)) (rusage-data-pid (target-data t)))
       (cond
        [(system new-cmd #:set-pwd? #t)
         (printf "CMD: ~a succeeded.\n" new-cmd)]
