@@ -131,7 +131,6 @@
     (when (hash-has-key? scalls pid)
       (error 'parse-strace "Already have processed syscalls for pid ~a" pid))
     
-    (printf "going to parse file ~a\n" f)
     (delay/thread
       (hash-set! scalls pid (hash-ref (run-in-place f pid) pid)))))
 
