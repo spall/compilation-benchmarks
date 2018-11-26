@@ -20,7 +20,7 @@
 (struct sc-readlink (name))
 (struct sc-fcntl (val flag))
 (struct sc-setxattr (name))
-(struct sc-symlink (name))
+(struct sc-symlink (content name))
 (struct sc-rename (old new))
 (struct sc-unlink (name))
 (struct sc-fork (pid))
@@ -165,7 +165,10 @@
 (define (parse-execve-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
-  (values (sc-execve fname) #f table))
+  (values (sc-execve (if (absolute-path? fname)
+			 fname
+			 (path->complete-path fname cdir)))
+          #f table))
 
 (define (parse-chdir-syscall scall cdir table)
   ;; todo consider if fpath is relative.........
@@ -231,8 +234,7 @@
 	 [else
 	  (values #f #f table)])]
        ['F_DUPFD
-        (values (sc-fcntl (lookup-file-descriptor table val 'parse-fcntl-args)
-			  'F_DUPFD) #f (hash-set table retval (lookup-file-descriptor table val 'parse-fcntl-args)))]
+        (values #f #f (hash-set table retval (lookup-file-descriptor table val 'parse-fcntl-args)))]
        [else
         (values #f #f table)])]                  
      [(expr:begin _ left right)
@@ -289,7 +291,10 @@
   (define expr (parse-expression (open-input-string (syscall-args scall))))
   (define fname (parse-chown-args expr))
   
-  (values (sc-chown fname) #f table))
+  (values (sc-chown (if (absolute-path? fname)
+  	  	    	fname
+			(path->complete-path fname cdir)))
+          #f table))
 
 (define (parse-chmod-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
@@ -320,7 +325,10 @@
   (define expr (parse-expression (open-input-string (syscall-args scall))))
   (define-values (fname flags) (parse-access-args expr))
 
-  (values (sc-access fname) #f table))   
+  (values (sc-access (if (absolute-path? fname)
+  	  	     	 fname
+			 (path->complete-path fname cdir)))
+	  #f table))   
 
 (define (parse-faccessat-syscall scall cdir table)
   (define args (args-parser 2 (open-input-string (syscall-args scall))))
@@ -359,16 +367,16 @@
 (define (parse-symlink-args args)
   (match args
    [(expr:begin _ (expr:string __ str1 w?) (expr:string src str2 w2?))
-    str2]
+    (values str1 str2)]
    [else
     (error 'parse-symlink-args "Did not match ~a" args)]))
 
 (define (parse-symlink-syscall scall cdir table)
-  (define lpath (parse-symlink-args (parse-expression (open-input-string (syscall-args scall)))))
+  (define-values (target lpath) (parse-symlink-args (parse-expression (open-input-string (syscall-args scall)))))
 
-  (values (sc-symlink (if (absolute-path? lpath)
-  	  	      	  lpath
-			  (path->complete-path lpath cdir)))
+  (values (sc-symlink target (if (absolute-path? lpath)
+  	  	      	         lpath
+			         (path->complete-path lpath cdir)))
           #f table))
 
 (define (parse-rename-args args)
@@ -377,6 +385,15 @@
     (values str1 str2)]
    [else
     (error 'parse-rename-args "Did not match ~a" args)]))
+
+(define (parse-symlinkat-syscall scall cdir table)
+  (define args (args-parser 3 (open-input-string (syscall-args scall))))
+  (define target (car args))
+  (define newdirfd (cadr args))
+  (define lpath (caddr args))
+
+  (values (sc-symlink target (maybe-create-absolute-path lpath newdirfd cdir table 'parse-symlinkat-syscall))
+          #f table))
 
 (define (parse-rename-syscall scall cdir table)
   (define-values (old new) (parse-rename-args (parse-expression (open-input-string (syscall-args scall)))))
@@ -411,6 +428,40 @@
   (values (sc-fork (string->number (string-trim (syscall-retval scall))))
   	  #f table))
 
+(define (parse-dup-syscall scall cdir table)
+  (define args (args-parser 1 (open-input-string (syscall-args scall))))
+  (define oldfd (string->number (car args)))
+  (unless oldfd
+    (error 'parse-dup-syscall "Failed to parse ~a as a number" (car args)))
+
+  (define newfd (string->number (string-trim (syscall-retval scall))))
+  (unless newfd
+    (error 'parse-dup-syscall "Failed to parse return value as a number ~a" (string-trim (syscall-retval scall))))
+
+  (cond
+   [(hash-ref table oldfd #f) =>
+    (lambda (val)
+      (values #f #f (hash-set table newfd val)))]
+   [else
+    (values #f #f table)]))
+
+(define (parse-dup2-syscall scall cdir table)
+  (define args (args-parser 2 (open-input-string (syscall-args scall))))
+  (define oldfd (string->number (car args)))
+  (define newfd (string->number (cadr args)))
+
+  (unless oldfd
+    (error 'parse-dup2-syscall "Failed to parse ~a as a number" (car args)))
+  (unless newfd
+    (error 'parse-dup2-syscall "Failed to parse ~a as a number" (cadr args)))
+
+  (cond
+   [(hash-ref table oldfd #f) =>
+    (lambda (val)
+      (values #f #f (hash-set table newfd val)))]
+   [else
+    (values #f #f table)]))
+
 (define (dispatch scall)
   (match (syscall-name scall)
     ["open"   parse-open-syscall]
@@ -421,6 +472,9 @@
     ["chmod"    parse-chmod-syscall]
     ["fchmod"   parse-fchmod-syscall]
     ["fchmodat" parse-fchmodat-syscall]
+
+    ["dup"  parse-dup-syscall]
+    [(or "dup2" "dup3") parse-dup2-syscall]
 
     ["access"    parse-access-syscall]
     ["faccessat" parse-faccessat-syscall]
@@ -450,6 +504,7 @@
     ["fsetxattr" parse-fsetxattr-syscall]
     
     ["symlink" parse-symlink-syscall]
+    ["symlinkat" parse-symlinkat-syscall]
     
     ["rename" parse-rename-syscall]
 
@@ -464,51 +519,97 @@
      (lambda (scall cdir table)
        (values #f cdir table))]))
 
+(define (remove-trailing-separator p)
+  (string->path (string-trim (path->string p) "/" #:left? #f)))
+
+(define (all-dirs fpath)
+  (define (helper p)
+    (define-values (base name _) (split-path p))
+
+    (cond
+     [(equal? base 'relative)
+      (error 'all-dirs "Should always be an absolute path ~a" p)]
+     [(equal? base (string->path "/"))
+      (helper base)]
+     [base
+      (define tmp (remove-trailing-separator base))
+      (cons tmp (helper base))]
+     [else
+      '()]))
+
+  (helper (simplify-path fpath)))
+
 (define (inputs-outputs scall)
   (match scall
    [(sc-open f r? w? r)
-    (values (if r? (list f) '())
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (if r? (cons f dirs) dirs)
 	    (if w? (list f) '()))]
    [(sc-execve f) ;; input
-    (values (list f) '())]
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) '())]
    [(sc-stat f) ;; input
     (cond
      [(or (equal? 0 f) (equal? 1 f) (equal? 2 f))
       (values '() '())]
-     [else
-      (values (list f) '())])]
+     [else ;;;;;; why would f be a number???????
+      ;; need to consider directories
+      (define dirs (all-dirs f))
+      (values (cons f dirs) '())])]
    [(sc-chown f) ;; input and output
-    (values (list f) (list f))]
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) (list f))]
    [(sc-access f) ;; input
-    (values (list f) '())]
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) '())]
    [(sc-mkdir d) ;; output
-    (values '() (list d))]
+    ;; need to consider directories
+    (define dirs (all-dirs d))
+    (values dirs (list d))]
    [(sc-chmod f) ;; input and output
     (cond
      [(or (equal? 0 f) (equal? 1 f) (equal? 2 f))
       (values '() '())]
      [else
-      (values (list f) (list f))])]
+      ;; need to consider directories
+      (define dirs (all-dirs f))
+      (values (cons f dirs) (list f))])]
    [(sc-readlink f)
-    (values (list f) '())]
-   [(sc-fcntl v fl) ;; fl should be o_append; only option now
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) '())]
+   [(sc-fcntl v fl) ;; TODO FIX THIS
     (cond
      [(or (equal? 0 v) (equal? 1 v) (equal? 2 v))
       (values '() '())]
      [else
       (values (list v) (list v))])]	
    [(sc-setxattr f)
-    (values (list f) (list f))]
-   [(sc-symlink f)
-    (values '() (list f))]
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) (list f))]
+   [(sc-symlink g f)
+    ;; need to consider directories
+    (define dirs0 (cons g (all-dirs g))) 
+    (define dirs (all-dirs f))
+    (values (append dirs0 dirs) (list f))]
    [(sc-rename o n)
-    (values (list o) (list n))]
+    ;; need to consider directories
+    (define dirs1 (all-dirs o))
+    (define dirs2 (all-dirs n))
+    (values (cons o (append dirs1 dirs2)) (list n))]
    [(sc-unlink f)
-    (values (list f) (list f))]
+    ;; need to consider directories
+    (define dirs (all-dirs f))
+    (values (cons f dirs) (list f))]
    [else
     (values '() '())]))
 
-(define SPECIAL (list "unlink" "unlinkat" "rm" "rmdir" "rename"))
+(define SPECIAL (list "unlink" "unlinkat" "rm" "rmdir" "rename" "mkdir"))
 
 (define (parse-syscall scall cdir table)
  (if (and (string-prefix? (syscall-retval scall) "-1")
@@ -519,6 +620,7 @@
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
 (define (process-syscalls-pid pid cdir_ table_ syscalls)
+  (printf "processing syscalls for pid ~a\n" pid)
   (cond
     [(hash-ref syscalls pid #f) =>
      (lambda (scalls)
@@ -553,6 +655,7 @@
 ;; also returns ins and outs for pid's created via fork/clone by pid
 ;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
 (define (process-in-out-pid pid cdir syscalls)
+  (printf "processing calls for pid ~a\n" pid)
   (define calls (process-syscalls-pid pid cdir (hash) syscalls))
   (if calls
       (for/fold ([in '()]
@@ -560,7 +663,11 @@
                 ([call calls])
 
         (define-values (is os) (inputs-outputs call))
-      
+        (when (= pid 63228)
+	  (printf "os is ~a\n" os))
+        (when (= pid 63229)
+	  (printf "is is ~a\n" is))      
+
         (values (append (filter (lambda (x)
      	     	     	          (not (member x in))) is)
 	                in)
