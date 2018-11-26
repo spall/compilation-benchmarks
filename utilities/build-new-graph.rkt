@@ -95,11 +95,10 @@
                        [rs reps])
       (cond
         [(empty? rs) ;; compare cr to  deps
-         (cond
+	 (cond
            [douts
             (define-values (cans cants)
-              (let loop ([crs cr])
-	        
+              (let loop ([crs cr])	        
                 (cond
                   [(empty? crs)
                    (values '() '())]
@@ -140,7 +139,7 @@
                    (values '() '())] ;; cans and cants
                   [(hash-ref rep-ins (car crs) #f) =>
                    (lambda (is)
-                     (call-with-values
+		     (call-with-values
                       (lambda () (loop (cdr crs)))
                       (lambda (can cant)
 		        (if (intersect? outs is) ;; can't move
@@ -200,11 +199,16 @@
 (define (combine ls h)
   (define new (make-hash))
   (for ([hv (in-hash-values h)])
-    (hash-set! new hv #t))
+    (for ([v hv])
+      (hash-set! new v #t)))
   (for ([lv ls])
     (hash-set! new lv #t))
 
-  (sequence->list (in-hash-keys new)))
+  (for/fold ([tmp '()])
+  	    ([k (in-hash-keys new)])
+    (if (list? k)
+        (error 'combine "k is a list")
+	(cons k tmp))))
 
 (define (leaf? t)
   (empty? (target-out-edges t)))
@@ -214,8 +218,6 @@
   (for ([graph (buildgraph-makegraphs bgraph)])
     (add-makegraph new-bgraph (build-new-makegraph graph syscalls)))
   new-bgraph)
-
-
 
 (define (build-new-leaf tid graph syscalls new-targets)  
   ;; 4. create copy of target
@@ -261,6 +263,8 @@
 (define (build-new-makegraph graph syscalls)
   (define new-graph (create-makegraph))
   
+  (printf "BUILDING NEW MAKEGRAPH\n\n")
+
   (define-values (nroot _ __)
     (build-new-target (makegraph-root graph) graph syscalls (makegraph-targets new-graph) (make-hash) (make-hash)))
 
