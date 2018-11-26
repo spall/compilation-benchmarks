@@ -86,7 +86,7 @@
 
   (write (edge-id e) port)
   (write-string "\n" port)
-  (write-string "End: " port)
+  (write-string (format "type ~a End: " (edge-type e)) port)
   (recur (edge-end e) port)
   (when mode (write-string ">" port)))
 
