@@ -41,25 +41,26 @@
     (work-graph graph)))
 
 (define (work-graph graph)
-  (define visited (make-hash))
-  (define cache (make-hash))  
+  (define visited (make-hash))  
 
   (define (node-work node-id)
     (define node (get-target graph node-id))
     (cond
       [(and (hash-ref visited node-id #f)
       	    (or (target-phony? node) (equal? target-type 'name)))
-       (hash-ref cache node-id)]
+       (define node (get-target graph node-id))
+       (hash-set! visited node-id #t)
+       (if (leaf-node? node)
+       	   (leaf-node-work node)
+	   (non-leaf-node-work node))]
       [(hash-ref visited node-id #f)
        0]
       [else
        (define node (get-target graph node-id))
        (hash-set! visited node-id #t)
-       (define tmp (if (leaf-node? node)
-       	               (leaf-node-work node)
-	               (non-leaf-node-work node)))
-       (hash-set! cache node-id tmp)
-       tmp]))
+       (if (leaf-node? node)
+       	   (leaf-node-work node)
+	   (non-leaf-node-work node))]))
 
   (define (leaf-node-work node)
     (define data (target-data node))
