@@ -3,10 +3,12 @@
 (require parser-tools/lex
 	 (prefix-in : parser-tools/lex-sre)
 	 c/parse
-	 c/ast)
+	 c/ast
+	 "flags.rkt")
 
 (provide process-in-out-pid
-	 (struct-out syscall))
+	 (struct-out syscall)
+	 PROJ-DIR)
 
 
 (struct syscall (name args retval) #:prefab)
@@ -25,7 +27,34 @@
 (struct sc-unlink (name))
 (struct sc-fork (pid))
 
-(define files-to-ignore (list "/dev/tty")) ;; add more here
+(define (remove-trailing-separator p)
+  (string->path (string-trim (path->string p) "/" #:left? #f)))
+
+(define (all-dirs fpath)
+  (define (helper p)
+    (define-values (base name _) (split-path p))
+
+    (cond
+     [(equal? base 'relative)
+      (error 'all-dirs "Should always be an absolute path ~a" p)]
+     [(equal? base (string->path "/"))
+      (helper base)]
+     [base
+      (cons (path->string (remove-trailing-separator base)) (helper base))]
+     [else
+      '()]))
+      
+  (when (number? fpath)
+    (error 'all-dirs "not a path ~a" fpath))
+
+  (helper (simplify-path fpath)))
+
+
+(define PROJ-DIR (make-parameter #f)) ;; to be set by caller
+(define (files-to-ignore) (foldl (lambda (p accu)
+			         (append (cons p (all-dirs (string->path p))) accu))
+			       '()
+			       (list "/dev/tty" "/dev/null" "/data/home.local/sjspall/compilation-benchmarks" (PROJ-DIR))))
 
 (define (lookup-file-descriptor table fd func)
   (hash-ref table fd (lambda () fd)))
@@ -126,10 +155,8 @@
      (define full-path (if (absolute-path? fname)
      	     	       	   fname
 			   (path->complete-path fname cdir)))
-
-     (if (member full-path files-to-ignore)
-     	 (values #f #f table)	      
-         (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path))))
+     
+     (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path)))
 
 (define (parse-openat-syscall scall cdir table)
   (define fd (string->number (string-trim (syscall-retval scall))))
@@ -374,9 +401,15 @@
 (define (parse-symlink-syscall scall cdir table)
   (define-values (target lpath) (parse-symlink-args (parse-expression (open-input-string (syscall-args scall)))))
 
-  (values (sc-symlink target (if (absolute-path? lpath)
+  (define nlpath (if (absolute-path? lpath)
   	  	      	         lpath
 			         (path->complete-path lpath cdir)))
+  (define-values (dir _ __) (split-path nlpath))
+  (define ntarget (if (absolute-path? target)
+  	  	      target
+		      (path->complete-path target dir))) 
+
+  (values (sc-symlink ntarget nlpath)
           #f table))
 
 (define (parse-rename-args args)
@@ -392,7 +425,13 @@
   (define newdirfd (cadr args))
   (define lpath (caddr args))
 
-  (values (sc-symlink target (maybe-create-absolute-path lpath newdirfd cdir table 'parse-symlinkat-syscall))
+  (define nlpath (maybe-create-absolute-path lpath newdirfd cdir table 'parse-symlinkat-syscall))
+  (define-values (dir _ __) (split-path nlpath))
+  (define ntarget (if (absolute-path? target)
+  	  	      target
+		      (path->complete-path target dir)))
+
+  (values (sc-symlink ntarget nlpath)
           #f table))
 
 (define (parse-rename-syscall scall cdir table)
@@ -519,25 +558,6 @@
      (lambda (scall cdir table)
        (values #f cdir table))]))
 
-(define (remove-trailing-separator p)
-  (string->path (string-trim (path->string p) "/" #:left? #f)))
-
-(define (all-dirs fpath)
-  (define (helper p)
-    (define-values (base name _) (split-path p))
-
-    (cond
-     [(equal? base 'relative)
-      (error 'all-dirs "Should always be an absolute path ~a" p)]
-     [(equal? base (string->path "/"))
-      (helper base)]
-     [base
-      (define tmp (remove-trailing-separator base))
-      (cons tmp (helper base))]
-     [else
-      '()]))
-
-  (helper (simplify-path fpath)))
 
 (define (inputs-outputs scall)
   (match scall
@@ -552,9 +572,11 @@
     (values (cons f dirs) '())]
    [(sc-stat f) ;; input
     (cond
-     [(or (equal? 0 f) (equal? 1 f) (equal? 2 f))
+     [(number? f)
+      (when (debug?)
+	    (printf "Warning: sc-stat file is ~a\n" f))
       (values '() '())]
-     [else ;;;;;; why would f be a number???????
+     [else
       ;; need to consider directories
       (define dirs (all-dirs f))
       (values (cons f dirs) '())])]
@@ -620,11 +642,11 @@
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
 (define (process-syscalls-pid pid cdir_ table_ syscalls)
-  (printf "processing syscalls for pid ~a\n" pid)
   (cond
     [(hash-ref syscalls pid #f) =>
      (lambda (scalls)
-     	  
+       (when (debug?)
+	     (printf "processing syscalls for pid ~a\n" pid))     	  
 	  (let loop ([cdir cdir_]
 	       	     [table table_]
 	       	     [scs scalls])
@@ -655,7 +677,6 @@
 ;; also returns ins and outs for pid's created via fork/clone by pid
 ;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
 (define (process-in-out-pid pid cdir syscalls)
-  (printf "processing calls for pid ~a\n" pid)
   (define calls (process-syscalls-pid pid cdir (hash) syscalls))
   (if calls
       (for/fold ([in '()]
@@ -663,16 +684,32 @@
                 ([call calls])
 
         (define-values (is os) (inputs-outputs call))
-        (when (= pid 63228)
-	  (printf "os is ~a\n" os))
-        (when (= pid 63229)
-	  (printf "is is ~a\n" is))      
 
+	;; turn all paths into strings
+	(define string-is (map (lambda (i)
+			         (if (path? i)
+				     (path->string i)
+				     i))
+			       is))
+        (define string-os (map (lambda (o)
+			         (if (path? o)
+				     (path->string o)
+				     o))
+                               os))
+
+	;; remove things that should be ignored
+	(define nos (foldl (lambda (o accu)
+	              	     (if (member o (files-to-ignore))
+		      	     	 accu
+		     	  	 (cons o accu)))
+                           '()
+	          	   string-os))	
+	
         (values (append (filter (lambda (x)
-     	     	     	          (not (member x in))) is)
+     	     	     	          (not (member x in))) string-is)
 	                in)
 	        (append (filter (lambda (x)
-	     	     	          (not (member x out))) os)
+	     	     	          (not (member x out))) nos)
 		        out)))
     (values #f #f)))
 

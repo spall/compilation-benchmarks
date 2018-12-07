@@ -1,6 +1,7 @@
 #lang racket
 
-(require racket/struct)
+(require racket/struct
+	 "flags.rkt")
 
 (provide (struct-out target)
 	 (struct-out targetid)
@@ -47,7 +48,9 @@
   (write-string ", " port)
   (write (target-mfile t) port)
   (write-string "\n" port)
-  (write-string "Dependencies and recipes:\n" port)
+  (write-string "target type: " port)
+  (write (target-type t) port)
+  (write-string "\nDependencies and recipes:\n" port)
   (for ([d (target-out-edges t)])
     (recur d port)
     (write-string "\n" port))
@@ -159,45 +162,85 @@
 (define (create-makegraph [root #f])
   (makegraph (make-hash) root))
 
-(define (shcall-target? tid)
-  (and (string-prefix? (targetid-name tid) "SHCALL")
-       (equal? (targetid-mfile tid) "top"))) 
+(define (fake-target? t)
+  (and (string-prefix? (target-name t) "FAKE")
+       (equal? (target-mfile t) "top")))
+
+(define (shcall-target? t)
+  (and (string-prefix? (target-name t) "SHCALL")
+       (equal? (target-mfile t) "top"))) 
 
 (define (add-target-to-makegraph graph tid t)
   (define targets (makegraph-targets graph))
-
+  
   (define (has-edge? t1 e)	  
     (ormap (lambda (e2)
-    	     (cond
-	      [(and (equal? (edge-type e) (edge-type e2))
-	     	    (equal? (edge-end e) (edge-end e2)))
-		#t]
-	      [(and (equal? (edge-type e) (edge-type e2))
-	      	    (shcall-target? (edge-end e)) (shcall-target? (edge-end e2)))
-	       ;; check if they are the same command
-	       (define d3 (target-data (get-target graph (edge-end e))))
-	       (define d4 (target-data (get-target graph (edge-end e2))))
-	       (and (equal? (rusage-data-cmd d3) (rusage-data-cmd d4))
-	       	    (equal? (rusage-data-dir d3) (rusage-data-dir d4)))]
-	      [else
-	       #f]))   	   
+	     (and (equal? (edge-type e) (edge-type e2))
+		  (same-target? (get-target graph (edge-end e)) 
+				(get-target graph (edge-end e2)))))
  	   (target-out-edges t1)))
 
+  ;; how do we define the idea of "same" target?
+  ;; exactly the same?
+  ;; subset the same?
+  ;; 1. exactly the same
+  ;; 2. newest target is a "subset" of the old target
+  ;; 3. What about the case where we merge them?
+  ;;    If we merge them it is because the NEWEST target has more dependnecies than 
+  ;;    the old target because more dependencies were created while make was running
+
+  ;; t1 and t2 are target objects
   (define (same-target? t1 t2)
-   (andmap (lambda (e)
-   	     (if (has-edge? t1 e)
-	         #t
-		 (begin 
-	           (printf "Did not find edge ~a\n" e)
-		   #f)))
- 	   (target-out-edges t2)))
+    (cond
+     [(equal? t1 t2) ;; exactly the same
+      #t]
+     [(and (shcall-target? t1) (shcall-target? t2)) ;; might be same shell-command
+      (define d1 (target-data t1))
+      (define d2 (target-data t2))
+      (and (equal? (rusage-data-cmd d1) (rusage-data-cmd d2))
+	   (equal? (rusage-data-dir d1) (rusage-data-dir d2)))]
+     [(and (fake-target? t1) (fake-target? t2))  ;; might be same fake target
+      ;; what makes a fake target the same?
+      ;; same as a non fake target?
+      #f
+      ]
+     [(and (equal? (target-name t1) (target-name t2))   ;; might be a subset; but then they need same name and file
+	   (equal? (target-mfile t1) (target-mfile t2)))
+      (andmap (lambda (e)
+		(cond
+		 [(has-edge? t1 e)
+		  #t]
+		 [else
+		  (when (debug?)
+			(printf "Did not find edge ~a from target <~a,~> in target <~a,~a>\n"
+				e (target-name t2) (target-mfile t2) (target-name t1) (target-mfile t1)))
+		  #f]))
+	      (target-out-edges t2))]
+     [else
+      #f]))
+
+  ;; t1 is exisiting target already in graph
+  (define (maybe-merge t1 t2)
+    (if (andmap (lambda (e)
+    	          (or (has-edge? t1 e)
+	              (equal? 'dep (edge-type e))))
+	        (target-out-edges t2))
+        (for-each (lambda (e)
+		    (unless (has-edge? t1 e)
+		      (add-dependency t1 (edge-end e))))
+		  (reverse (target-out-edges t2)))
+        #f))   
 
   (cond
     [(hash-ref targets tid #f) =>
      (lambda (tmp)
-       (when (and (not (empty? (target-out-edges t)))
-       	     	  (not (same-target? tmp t))) 
-         (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))))]
+       (when  (and (not (empty? (target-out-edges t))) ;; if out edges are empty then this is a subset
+       	           (not (same-target? tmp t)))
+         (cond
+	  [(maybe-merge tmp t)
+	   (printf "Merged target <~a,~a>" (targetid-name tid) (targetid-mfile tid))]
+	  [else
+           (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))])))]
     [else
      (hash-set! targets tid t)]))
 

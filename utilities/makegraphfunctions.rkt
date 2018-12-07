@@ -46,21 +46,16 @@
   (define (node-work node-id)
     (define node (get-target graph node-id))
     (cond
-      [(and (hash-ref visited node-id #f)
-      	    (or (target-phony? node) (equal? target-type 'name)))
+      [(or (target-phony? node) (equal? target-type 'name) 
+      	   (not (hash-ref visited node-id #f)))
        (define node (get-target graph node-id))
+       
        (hash-set! visited node-id #t)
        (if (leaf-node? node)
        	   (leaf-node-work node)
 	   (non-leaf-node-work node))]
-      [(hash-ref visited node-id #f)
-       0]
       [else
-       (define node (get-target graph node-id))
-       (hash-set! visited node-id #t)
-       (if (leaf-node? node)
-       	   (leaf-node-work node)
-	   (non-leaf-node-work node))]))
+       0]))
 
   (define (leaf-node-work node)
     (define data (target-data node))

@@ -8,7 +8,8 @@
          "makegraphfunctions.rkt"
          "build-new-graph.rkt"
          "makegraph.rkt"
-         "run-graph.rkt")
+         "run-graph.rkt"
+	 "flags.rkt")
 
 (define create-dotfile? (make-parameter #f)) 
 (define rusage? (make-parameter #f)) ;; is there rusage data?
@@ -21,10 +22,14 @@
 (define new-graph? (make-parameter #f))
 (define run-new-graph? (make-parameter #f))
 (define dry-run-graph? (make-parameter #f))
+(define run-orig-graph? (make-parameter #f))
 
 (define file-path
   (command-line
    #:once-each
+   [("--debug") level
+    "Turn on debug printing at provided level" ;; TODO add an explanation of the levels
+    (debug? #t)]
    [("-d" "--dotfile") df
     "Produce a graphviz dot file"
     (create-dotfile? df)]
@@ -49,6 +54,9 @@
    [("--dry-run-graph")
     "prints commands that would be run when building graph" 
     (dry-run-graph? #t)]
+   [("--run-orig-graph")
+    "runs all shell commands in graph constructed from make data.  Helps verify graph was constructed correctly."
+    (run-orig-graph? #t)]
    [("--run-new-graph")
     "rebuilds graph using strace data and then runs it"
     (run-new-graph? #t)]
@@ -105,6 +113,14 @@
         (parse-rusage file-path)]
        [else
         (error 'driver "Expected '--rusage-data' flag")]))
+
+   (when (dry-run-graph?)
+	 (printf "Doing a dry run of original graph.\n")
+	 (run-graph-dry graph))
+
+   (when (run-orig-graph?)
+	 (printf "Running original graph.\n")
+	 (run-graph-sequential graph))
    
    (define syscall-info 
      (when (strace?)
@@ -129,8 +145,12 @@
    (when parallelism_
      (printf "Parallelism for original graph is ~a\n" parallelism_))
 
-
    (when (or (new-graph?) (run-new-graph?))
+	 ;; set to be the directory of the top level make
+	 ;; TODO: allow user to provide more directories
+	 (unless (empty? (buildgraph-makegraphs graph))
+		 (PROJ-DIR (targetid-mfile (makegraph-root (car (buildgraph-makegraphs graph))))))
+	  
      (define new-graph (build-new-graph graph syscall-info))
 
      (define nwork_ (if (work?)

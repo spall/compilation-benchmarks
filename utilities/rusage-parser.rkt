@@ -124,6 +124,8 @@
 (define (parse-file fip)
   (define bgraph (create-buildgraph))
 
+  (define really-submake? #f)
+
   (define (parse-line line st)
     (define mgraph (state-mgraph st))
     (define ts-local (state-ts st))
@@ -183,25 +185,46 @@
     (unless (eof-object? line)
       (match (string-split line)
         [`("executing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
+	 (cond
+	  [(equal? #f mgraph)
+	   ;; a new top level invocation of make so create a new makegraph
+	   (define new-mgraph (create-makegraph))
+	   (printf "Created a new mgraph ~a\n" line)
+           (define tname (symbol->string (gensym "TOP")))
+           (define ntarget-id (create-targetid tname (car rest)))
+           (define ntarget (create-target tname))
 
-	 ;; a new top level invocation of make so create a new makegraph
-	 (define new-mgraph (create-makegraph))
-	 
-         (define tname (symbol->string (gensym "TOP")))
-         (define ntarget-id (create-targetid tname (car rest)))
-         (define ntarget (create-target tname))
+           ;; need to parse cmd for -f / --file
+	   (define makefiles (topmake-makefiles (string-join cmd " ")))
+	   (if (empty? makefiles)
+	       (set-target-mfile! ntarget (car rest)) ;; just directory
+	       (set-target-mfile! ntarget (path->complete-path (last makefiles) (car rest))))
 
-         ;; need to parse cmd for -f / --file
-	 (define makefiles (topmake-makefiles (string-join cmd " ")))
-	 (if (empty? makefiles)
-	     (set-target-mfile! ntarget (car rest)) ;; just directory
-	     (set-target-mfile! ntarget (path->complete-path (last makefiles) (car rest))))
+           (read-file (struct-copy state st
+                                   [ts (cons (cons ntarget-id ntarget) ts-local)]
+                                   [prqs? (cons #f prqs?-local)]
+                                   [dirs (list (car rest))]
+				   [mgraph new-mgraph]))]
+          [else ;; really is a submake
 
-         (read-file (struct-copy state st
-                                 [ts (cons (cons ntarget-id ntarget) ts-local)]
-                                 [prqs? (cons #f prqs?-local)]
-                                 [dirs (list (car rest))]
-				 [mgraph new-mgraph]))]
+	   (when (empty? shcalls-local)
+	     (printf "line is ~a\n" line)
+	     (error 'parse-line "Shell call stack is empty"))
+
+	   (define cdir (car rest))
+	   (define nsubmake (create-submake (string-join cmd " ") (shcall-n (car shcalls-local))))
+	   (define-values (dirs mfiles) (submake-dirs-makefiles (string-join cmd " ")))
+	   (define ndir (let ([tmp (for/fold ([ndir cdir])
+	    	                           ([dir dirs])
+                                   (path->complete-path dir ndir))])
+		        (if (empty? mfiles)
+			    tmp
+			    (path->complete-path (car mfiles) tmp))))
+	   (set-shcall-num-submakes! (car shcalls-local) (+ 1 (shcall-num-submakes (car shcalls-local))))
+	   (set! really-submake? #t)
+           (read-file (struct-copy state st
+                                 [dirs (cons ndir dirs-local)]
+                                 [submakes (cons nsubmake submakes-local)]))])]
 	[`("Start" "of" "make" "overhead:" ,ts_ . ,rest)
 	 (define start (string->number ts_))
          (read-file (struct-copy state st
@@ -211,7 +234,7 @@
 	 (define end (string->number ts_))
          (read-file (struct-copy state st
                                  [overheads (cons (cons end (car overheads-local)) (cdr overheads-local))]))]
-        [`("finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
+        [`(,pid_ "finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
 	 ;; TODO: add overhead time to this somehow......
 	 (define stmp (if (empty? overheads-local)
 	 	      	  0
@@ -261,11 +284,25 @@
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
                                  [prqs? (cdr prqs?-local)]))]
+        [`(,submake "***" ,_ ,name "Error" . ,errnum)
+	 (printf "matched something\n")
+
+	 (define tname (string-append "'" (string-trim name "]" #:left? #f)))
+         (check-current-target tname t (format "Error ~a" (car errnum)))
+
+	 (process-finished-target #t)
+
+         (read-file (struct-copy state st
+                                 [ts (cdr ts-local)]
+                                 [prqs? (cdr prqs?-local)]))]
+	 
         [`("Successfully" "remade" "target" "file" ,target "PHONY?" ,ph? . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "Successfully remade")
          
-         (process-finished-target #t (string->number ph?))
+         (process-finished-target #t (if (= 0 (string->number ph?))
+	 			     	 #f
+					 #t))
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
@@ -300,7 +337,7 @@
          (define n (string->number n_))
          (define nshcall (create-shcall (string-join cmd " ") n dir))
          (define nextline (read-full-line fip))
-         ;; if next line is an executing sub-make then this is a duplicate.
+         ;; if next MEANINGFUL line is an executing sub-make then this is a duplicate.
          (match (string-split nextline)
            [`("executing" "sub-make:" ,n_2 ":" ,cmd ... ";" "in" "directory" . ,rest)
             ;; parse cmd looking for -C dir
@@ -310,7 +347,7 @@
             
             (define cdir (car rest))
             (define nsubmake (create-submake (string-join cmd " ") n2))
-            (when DEBUG
+            (when (debug?)
               (printf "current directory is ~a\n" cdir))
             
 	    (define-values (dirs mfiles) (submake-dirs-makefiles (string-join cmd " ")))
@@ -338,7 +375,7 @@
          (define n (string->number n_))
          (define cdir (car rest))
          (define nsubmake (create-submake (string-join cmd " ") n))
-         (when DEBUG
+         (when (debug?)
            (printf "current directory is ~a\n" cdir))
          
          
@@ -411,7 +448,7 @@
 		 (set-rusage-data-dir! info (shcall-dir (car shcalls-local)))
                  (cond
                    [(shcall-duplicate? (car shcalls-local)) ;; if this is a submake ignore it
-                    (when DEBUG
+                    (when (debug?)
                       (printf "ignoring cmd ~a\n" cmd))
                     (read-file (struct-copy state st
                                             [shcalls (cdr shcalls-local)]))]
@@ -423,6 +460,7 @@
 		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
                     (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
                     (set-target-mfile! tmp-FAKE "top") ;; this is probably wrong
+		    
                     ;; add to graph
                     (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
                     
@@ -442,12 +480,11 @@
                    [else ;; if this is not a submake......
                     (set! SHELLCOUNT (+ 1 SHELLCOUNT))
 
-                    (when (= n 86)
-		      (printf "creating shcall-target for 86\n"))
 		    (define shcall-targetid (create-targetid (symbol->string (gensym "SHCALL")) "top"))
                     (define shcall-target (create-target (targetid-name shcall-targetid)))
                     (set-target-mfile! shcall-target "top") ;; this is probably wrong
                     (set-target-data! shcall-target info)
+		    (set-target-phony?! shcall-target #t)
                     (add-target-to-makegraph mgraph shcall-targetid shcall-target)
 		    
                     (add-recipe t shcall-targetid)
@@ -459,6 +496,91 @@
            [else
             (error 'parse-line "Got ~a following ~a instead of rusageinfo" timesline line)])]
 
+
+        [`("topmake-argv=" . ,rest)
+	 #:when really-submake?
+	 (define argv-cmd (string-join rest " "))
+         (define timesline (read-full-line fip))
+         (define finishline (let loop ([ln (read-full-line fip)])
+                              (if (equal? "" ln)
+                                  (loop (read-full-line fip))
+                                  ln)))
+         (cond
+           [(elapsed? timesline argv-cmd) =>
+            (lambda (info)
+              (match (string-split finishline)
+                [`(,pid_ "finishing" "top-make:" ,cmd ... ";" "in" "directory" . ,rest)
+                 ;; TODO: add overhead time to this somehow...
+
+		 (set! really-submake? #f)
+		 (define stmp (if (empty? overheads-local)
+		 	      	  0	  
+				  (cadr (car overheads-local))))	
+	 	 (define etmp (if (empty? overheads-local)
+		 	      	  0
+				  (car (car overheads-local))))		
+
+		 (when (empty? submakes-local)
+                   (error 'parse-line "Submakes is empty"))
+                 (unless (= 0 (submake-depth (car submakes-local)))
+                   (error 'parse-line "~a depth is ~a not zero" argv-cmd (submake-depth (car submakes-local))))
+                 (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
+		 (set-rusage-data-id! info (submake-n (car submakes-local)))
+                 (set-rusage-data-pid! info pid)
+                 (define cdir (car rest))
+		 (set-rusage-data-dir! info cdir)
+                 (when (debug?)
+                   (printf "current directory is ~a\n" cdir))
+                 ;; error checking.
+
+                 
+	         (define-values (dirs mfiles) (submake-dirs-makefiles (string-join cmd " ")))
+	         (define ldir (let ([tmp (for/fold ([ndir cdir])
+	    	                                   ([dir dirs])
+                                           (path->complete-path dir ndir))])
+		                (if (empty? mfiles)
+			            tmp
+			            (path->complete-path (car mfiles) tmp))))
+         
+                 (unless (equal? (car dirs-local) ldir)
+                   (error 'parse-line "Expected to be leaving directory ~a; but leaving ~a instead." (car dirs-local) cdir))
+
+                 (define count (submake-count (car submakes-local)))
+                 (cond
+                   [(> count 1) ;; use FAKE target.
+                    (define last-edges (get-last-edges t count))
+                    ;; add edges to fake target.
+                    ;; remove edges from current target.
+		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
+                    (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
+                    (set-target-mfile! tmp-FAKE "top")
+		    
+                    ;; add to graph
+                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
+                    
+                    (for ([last-edge last-edges])
+		      (remove-edge t last-edge)
+                      (add-edge tmp-FAKE last-edge 'dep))
+                    
+                    ;; add edge from current target to fake target.
+                    ;; should be a recipe
+                    (set-rusage-data-submake?! info #t)
+                    ;(set-target-data! tmp-FAKE (list (- etmp stmp) info))
+                    
+                    (add-recipe t tmp-FAKEid)]
+                   [else
+                    (set-rusage-data-submake?! info #t)
+                    ;; is the following line correct?
+                    (set-target-data! t (cons (- etmp stmp) (cons info (target-data t))))])]
+                [else
+                 (error 'parse-line "Expected finishing submake line, got ~a instead" finishline)])
+
+              (read-file (struct-copy state st
+                                      [dirs (cdr dirs-local)]
+                                      [submakes (cdr submakes-local)]
+                                      [overheads (if (empty? overheads-local)
+				      		     overheads-local
+						     (cdr overheads-local))])))])]         
         ;; produced by submake script; may be a duplicate of another argv line produced by rusage script
         ;; may not be, depending on how submake was launched
         ;; will occur first if it is a duplicate.
@@ -496,7 +618,7 @@
                  (set-rusage-data-pid! info pid)
                  (define cdir (car rest))
 		 (set-rusage-data-dir! info cdir)
-                 (when DEBUG
+                 (when (debug?)
                    (printf "current directory is ~a\n" cdir))
                  ;; error checking.
 
@@ -521,6 +643,7 @@
 		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
                     (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
                     (set-target-mfile! tmp-FAKE "top")
+		    (set-target-phony?! tmp-FAKE #t)
                     ;; add to graph
                     (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
                     
@@ -551,7 +674,7 @@
             (error 'parse-line
                    "Expected times line to follow argv line; got ~a instead\n" timesline)])]
         [else
-         (when DEBUG
+         (when #t
            (printf "Didn't match ~a\n" line))
          (read-file st)])))
   
@@ -562,9 +685,8 @@
   (read-file (state (list (cons #f #f)) (list #f) #f '() '() '() #f))
   bgraph)
       
-(define (parse-rusage file-path [debug? #f])
+(define (parse-rusage file-path)
   (define file (open-input-file file-path #:mode 'text))
   (define result (parse-file file))
-  (set-DEBUG! debug?)
   (close-input-port file)
   result)

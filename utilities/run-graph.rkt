@@ -5,7 +5,8 @@
 	 racket/string
          racket/system
 	 parser-tools/lex
-	 (prefix-in : parser-tools/lex-sre))
+	 (prefix-in : parser-tools/lex-sre)
+	 "flags.rkt")
 
 (provide run-graph-sequential
 	 run-graph-dry)
@@ -71,6 +72,7 @@
 ;; graph -> error?
 (define (run-graph-sequential bgraph)
   (for ([graph (buildgraph-makegraphs bgraph)])
+    (printf "running graph\n")
     (run-makegraph-sequential graph)))
 
 (define (run-makegraph-sequential graph)
@@ -82,18 +84,25 @@
       [(and (hash-ref already-run tid #f)
      	    (not (target-phony? t))
 	    (not (equal? 'name (target-type t))))
-      (printf "Not running target ~a again.\n" tid)]
+      (when (debug?)
+	    (printf "Not running target ~a again.\n" tid))]
       [(empty? (target-out-edges t))
        (run-leaf-sequential t)
        (hash-set! already-run tid #t)]
       [else
        (define-values (deps recipes)
          (separate-edges (target-out-edges t)))
-     
+       
        (printf "Running dependencies for target <~a,~a>\n" (target-name t) (target-mfile t))
 
-       (for ([d (shuffle deps)]) ;; run these in strange order to stress test
-         (run-target-sequential (edge-end d)))
+       (for ([d (cond
+		 [(debug?)
+		  (printf "Running dependencies in original order.\n")
+		  (reverse deps)]
+		 [else ;; run in orig order if debugging
+		  (shuffle deps)])]) ;; run these in strange order to stress test
+	    (run-target-sequential (edge-end d))))
+      
 
        (printf "Running recipes for target <~a,~a>\n" (target-name t) (target-mfile t))
      

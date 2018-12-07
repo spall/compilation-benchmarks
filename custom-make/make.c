@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
       fprintf(out, "%s ", argv[a]);
     }
     
-    fprintf(out, "\nelapsed= %lld.%.9ld\n finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec);
+    fprintf(out, "\nelapsed= %lld.%.9ld\n [%d] finishing top-make: ", (long long)tt->tv_sec, tt->tv_nsec, pid);
 
     for(a = 0; a < argc; a ++) {
       fprintf(out, "%s ", argv[a]);
