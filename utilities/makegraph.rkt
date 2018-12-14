@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 
 (require racket/struct
 	 "flags.rkt")
@@ -202,8 +202,16 @@
      [(and (fake-target? t1) (fake-target? t2))  ;; might be same fake target
       ;; what makes a fake target the same?
       ;; same as a non fake target?
-      #f
-      ]
+      (andmap (lambda (e)
+		(cond
+		 [(has-edge? t1 e)
+		  #t]
+		 [else
+		  (when (debug?)
+			(printf "Did not find edge ~a from target <~a,~> in target <~a,~a>\n"
+				e (target-name t2) (target-mfile t2) (target-name t1) (target-mfile t1)))
+		  #f]))
+	      (target-out-edges t2))]
      [(and (equal? (target-name t1) (target-name t2))   ;; might be a subset; but then they need same name and file
 	   (equal? (target-mfile t1) (target-mfile t2)))
       (andmap (lambda (e)
@@ -212,7 +220,7 @@
 		  #t]
 		 [else
 		  (when (debug?)
-			(printf "Did not find edge ~a from target <~a,~> in target <~a,~a>\n"
+			(printf "Did not find edge ~a from target <~a,~a> in target <~a,~a>\n"
 				e (target-name t2) (target-mfile t2) (target-name t1) (target-mfile t1)))
 		  #f]))
 	      (target-out-edges t2))]
