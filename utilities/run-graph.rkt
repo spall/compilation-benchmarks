@@ -101,7 +101,7 @@
 		  (reverse deps)]
 		 [else ;; run in orig order if debugging
 		  (shuffle deps)])]) ;; run these in strange order to stress test
-	    (run-target-sequential (edge-end d))))
+	    (run-target-sequential (edge-end d)))
       
 
        (printf "Running recipes for target <~a,~a>\n" (target-name t) (target-mfile t))
@@ -128,7 +128,7 @@
 
       (define new-cmd (fix-cmd (rusage-data-cmd (target-data t))))
 
-      (printf "Running CMD: ~a ; PID: ~a\n" (rusage-data-id (target-data t)) (rusage-data-pid (target-data t)))
+      (printf "Running CMD: ~a ; PID: ~a\n" (rusage-data-id (target-data t)) (car (rusage-data-pid (target-data t))))
       (cond
        [(system new-cmd #:set-pwd? #t)
         (printf "CMD: ~a succeeded.\n" new-cmd)]

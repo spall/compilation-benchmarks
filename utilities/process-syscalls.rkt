@@ -6,10 +6,12 @@
 	 c/ast
 	 "flags.rkt")
 
-(provide process-in-out-pid
+(provide process-in-out
+	 process-all-pids
 	 (struct-out syscall)
 	 PROJ-DIR)
 
+(define debug-hash (make-hash))
 
 (struct syscall (name args retval) #:prefab)
 (struct sc-open (file read? write? retval))
@@ -639,45 +641,116 @@
      (values #f cdir table)
      ((dispatch scall) scall cdir table)))
 
+(define (fork? scall)
+  (cond
+   [(string-prefix? (syscall-retval scall) "-1")
+    #f]
+   [(or (equal? "fork" (syscall-name scall)) 
+	(equal? "clone" (syscall-name scall)) (equal? "vfork" (syscall-name scall)))
+    (define-values (res _ __) ((dispatch scall) scall #f (hash)))
+    (unless (sc-fork? res)
+	    (error 'fork? "System call name is ~a but didn't receive expected struct." (syscall-name scall)))
+    (sc-fork-pid res)]
+   [else
+    #f]))
+
+;; starting pid
+;; ordering of pids
+;; hash table from pid -> hash table from n -> calls
+;; returns list of calls and new ordering
+(define (combine-forks pid ordering syscalls)
+  (when (empty? ordering)
+	(error 'combine-forks "ordering is empty!"))
+  (cond
+   [(hash-ref syscalls pid #f) =>
+    (lambda (ntable)
+      (define scalls (cond
+		      [(hash-ref ntable 1 #f) ;; more than 1 process ran with pid
+		       ;; first thing in ordering should correspond to this pid
+		       (unless (equal? (caar ordering) pid)
+			       (error 'combine-forks "First pid in ordering is ~a; expected ~a" (car ordering) pid))
+		       (hash-ref ntable (cdar ordering))]
+		      [else ;; only 1 process ran with this pid so easy
+		       (hash-ref ntable 0)]))
+
+	;; look through scalls for forks and follow them
+	(let loop ([scs scalls]
+		   [order (cdr ordering)])
+	  (cond
+	   [(empty? scs)
+	    (values '() order)]
+	   [(fork? (car scs)) =>
+	    (lambda (fpid)
+	      (when (empty? order)
+		    (error 'combine-forks "forked pid ~a but ordering is empty!" fpid))
+	      (define-values (fcalls norder) (combine-forks fpid order syscalls))
+	      (define-values (calls norder2) (loop (cdr scs) norder))
+	      (values (append fcalls calls) norder2))]
+	   [else ;; not a fork
+	    (call-with-values (lambda () (loop (cdr scs) order))
+	      (lambda (calls norder)
+		(values (cons (car scs) calls)
+			norder)))])))]
+      [else ;; no info shouldn't happen?
+       (error 'combine-forks "No syscall info for pid ~a" pid)]))
+   
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
-(define (process-syscalls-pid pid cdir_ table_ syscalls)
-  (cond
-    [(hash-ref syscalls pid #f) =>
-     (lambda (scalls)
-       (when (debug?)
-	     (printf "processing syscalls for pid ~a\n" pid))     	  
-	  (let loop ([cdir cdir_]
-	       	     [table table_]
-	       	     [scs scalls])
+(define (process-syscalls pid cdir_ table_ syscalls)
+  (when (debug?)
+	(printf "processing syscalls for pid ~a\n" pid))     	  
+  (let loop ([cdir cdir_]
+	     [table table_]
+	     [scs syscalls])
+    (cond
+     [(empty? scs)
+      '()]
+     [else
+      (define-values (res ndir ntable) (parse-syscall (car scs) cdir table))
+      (cond
+       [(or (equal? res #f) (void? res))
+	(loop (or ndir cdir) ntable (cdr scs))]
+       [(sc-fork? res)
+	(error 'process-syscalls "Encountered a fork but these should have been processed and removed; pid ~a" pid)]
+       [else
+	(define recur (loop (or ndir cdir) ntable (cdr scs)))
+	(if recur
+	    (cons res recur)
+	    #f)])])))
+
+(define (next-n table)
+  (+ 1 (for/fold ([max_ 0])
+		 ([k (in-hash-keys table)])
+		 (max max_ k))))
+
+;; process pids in order they appear in syscalls
+;; order is important here because pid's can be reused.
+(define (process-all-pids ordering_ syscalls)
+
+  (define new-table (make-hash)) ;; pid -> (hash from num -> calls - forks) ;; 0 indexed
+
+  (define (helper ordering)
+    (unless (empty? ordering)
+	    (define pid (caar ordering))
+	    (define-values (calls nordering) (combine-forks (caar ordering) ordering syscalls))
+	    ;; add to new-table
 	    (cond
-	     [(empty? scs)
-	      '()]
+	     [(hash-ref new-table pid #f) => ;; there is already a table in new-table for pid
+	      (lambda (tmp)
+		(define n (next-n tmp))
+		(hash-set! new-table pid (hash-set tmp n calls)))]
 	     [else
-	      (define-values (res ndir ntable) (parse-syscall (car scs) cdir table))
-	      (cond
-	       [(or (equal? res #f) (void? res))
-	        (loop (or ndir cdir) ntable (cdr scs))]
-	       [(sc-fork? res)
-	        (define fork-calls (process-syscalls-pid (sc-fork-pid res) cdir ntable syscalls))
-		(define recur (loop (or ndir cdir) ntable (cdr scs)))
-		(if (and fork-calls recur)
-		    (append (cons res fork-calls)
-		    	    recur)
-		    #f)]
-               [else
-	        (define recur (loop (or ndir cdir) ntable (cdr scs)))
-		(if recur
-		    (cons res recur)
-		    #f)])])))]
-    [else
-     #f]))
+	      (hash-set! new-table pid (hash 0 calls))])
+	    
+	    (helper nordering)))
+  
+  (helper ordering_) ;; populates new-table
+  new-table)
 
 ;; determines what the inputs/outputs are.
 ;; also returns ins and outs for pid's created via fork/clone by pid
-;; for example: (open "f" 1)   would currently mark "f" as an input and an output. temporarily
-(define (process-in-out-pid pid cdir syscalls)
-  (define calls (process-syscalls-pid pid cdir (hash) syscalls))
+(define (process-in-out pid cdir syscalls)
+  (define calls (process-syscalls pid cdir (hash) syscalls))
   (if calls
       (for/fold ([in '()]
                  [out '()])
