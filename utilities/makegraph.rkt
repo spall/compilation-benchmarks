@@ -149,7 +149,7 @@
   (recur (makegraph-root mg) port)
   (write-string "\n" port)
   (write-string "Targets: \n" port)
-  (for ([t (makegraph-targets mg)])
+  (for ([t (in-hash-values (makegraph-targets mg))])
     (recur t port)
     (write-string "\n"))
   (when mode (write-string ">" port)))
