@@ -269,18 +269,8 @@ each thing in the sublist;  so create a target for each thing in sublist....
     (cond
      [(not (rusage-data? data))
       (values '() '())]
-     [(hash-ref syscalls (car (rusage-data-pid data)) #f) =>
-      (lambda (ntable)
-	(cond
-	 [(hash-ref ntable (cdr rusage-data-pid data) #f) =>
-	  (lambda (scalls)
-	    (cond
-	     [scalls
-	      (process-in-out (car (rusage-data-pid data)) (rusage-data-dir data) scalls)]
-	     [else ;; no info
-	      (values #f #f)]))]
-	 [else
-	  (values #f #f)]))]
+     [(hash-ref syscalls (rusage-data-pid data) #f)
+      (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
      [else ;; no info
       (values #f #f)]))
 

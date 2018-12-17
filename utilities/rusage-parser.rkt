@@ -123,7 +123,6 @@
 
 (define (parse-file fip)
   (define bgraph (create-buildgraph))
-  (define pid-tracker (make-hash)) ;; keep track of pids so we can distinguish between multiple uses
 
   (define really-submake? #f)
 
@@ -443,18 +442,10 @@
                    (error 'parse-line "shcalls is empty"))
                  (unless (= n (shcall-n (car shcalls-local)))
                    (error 'parse-line "Expected shell call with n of ~a to be top of stack, not ~a" n (shcall-n (car shcalls-local))))
-                 (define pid (string->number (string-trim (string-trim pid_ "[") "]")))
-
+                 (define pid (string-trim (string-trim pid_ "[") "]"))
+		 
 		 (set-rusage-data-id! info n)
-		 ;; look up pid in pid tracker
-		 (cond
-		  [(hash-ref pid-tracker pid #f) => ;; have seen before
-		   (lambda (n_)
-		     (hash-set! pid-tracker pid (+ 1 n_))
-		     (set-rusage-data-pid! info (cons pid (+ 1 n_))))]
-		  [else ;; haven't seen this pid before  
-		   (set-rusage-data-pid! info (cons pid 0))
-		   (hash-set! pid-tracker pid 0)])
+		 (set-rusage-data-pid! info pid)
 
 		 (set-rusage-data-dir! info (shcall-dir (car shcalls-local)))
                  (cond

@@ -124,10 +124,8 @@
    
    (define syscall-info 
      (when (strace?)
-	   (call-with-values (lambda () (parse-strace (strace?)))
-	     (lambda (pid-ordering scalls)
-	       (process-all-pids pid-ordering scalls)))))
-   
+	   (parse-strace (strace?))))
+
    (define work_ (if (work?)
                      (work graph)
 		     #f))
@@ -137,6 +135,7 @@
    (define span_ (if (span?)
    	   	     (span graph)
 		     #f))
+
    (when span_
      (printf "Span for original graph is ~a\n" span_))
    

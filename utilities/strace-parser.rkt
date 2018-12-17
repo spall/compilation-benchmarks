@@ -140,42 +140,23 @@
 			     (define ext (path-get-extension f))
 			     (unless ext
 				     (error 'parse-strace "~a does not have an extension" f))
+			     
+
 			     (define strext (bytes->string/locale ext #f 1))
 			     (define pid #f)
-			     (define count #f)
-			     (define tstamp #f)
+			     (define uniqueid #f)
 			     (define tmp (string-split strext "_")) ;; should be either 2 or 3 things
-			     (set! count_ (+ 1 count_))
-			     (cond
-			      [(= 2 (length tmp)) ;; pid_timestamp
-			       (set! pid (string->number (car tmp)))
-			       (set! tstamp (string->number (replace-comma (cadr tmp))))]
-			      [(= 3 (length tmp))               ;; pid_n_timestamp
-			       (set! pid (string->number (car tmp)))
-			       (set! count (string->number (cadr tmp)))
-			       (set! tstamp (string->number (replace-comma (caddr tmp))))]
-			      [else
-			       (error 'parse-strace "This data is not compatible with current version. ~a" strext)])
-			     
-			     (when (hash-ref tstamp->pid tstamp #f)
-				   (error 'parse-strace "Have seen tstamp ~a before" tstamp))
-			     (hash-set! tstamp->pid tstamp (cons pid (if count (+ 1 count) 0)))
 			     
 			     (delay/thread
-			      (let ([res (run-in-place f pid)])
-				(if (hash-has-key? scalls pid)
-				    (hash-set! scalls pid (hash-set (hash-ref scalls pid) (+ 1 count) (if (contains-failure? res) #f res)))
-				    (hash-set! scalls pid (hash 0 (if (contains-failure? res) #f res))))))
+			      (let ([res (run-in-place f)])
+				(if (hash-has-key? scalls strext)
+				    (error 'parse-strace "Have seen identifier ~a before." strext)
+				    (hash-set! scalls strext (if (contains-failure? res) #f res)))))))
   
   (for ([pr promises])
        (force pr))
   
-  ;; sort tstamp -> pid 
-  (values (map cdr
-	       (sort (hash->list tstamp->pid)
-		     ;; want a list of pids. 
-		     < #:key car))
-	  scalls))
+  scalls)
 
 (define (contains-failure? ls)
   (cond
@@ -199,15 +180,15 @@
   (place/context ch
 		 (let loop ()
 		   (match (place-channel-get get-ch)
-			  [(vector f pid res-ch)
+			  [(vector f res-ch)
 			   (define res (parse-file f))
 			   
 			   (place-channel-put res-ch res)])
 		   (loop))))
 
-(define (run-in-place f pid)
+(define (run-in-place f)
   (define-values (res-ch res-ch*) (place-channel))
   
-  (place-channel-put enq-ch (vector f pid res-ch*))
+  (place-channel-put enq-ch (vector f res-ch*))
   
   (place-channel-get res-ch))
