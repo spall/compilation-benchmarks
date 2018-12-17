@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 
 (require parser-tools/lex
 	 (prefix-in : parser-tools/lex-sre)
@@ -55,7 +55,7 @@
 (define (files-to-ignore) (foldl (lambda (p accu)
 			         (append (cons p (all-dirs (string->path p))) accu))
 			       '()
-			       (list "/dev/tty" "/dev/null" "/data/home.local/sjspall/compilation-benchmarks" (PROJ-DIR))))
+			       (list "/tmp" "/dev/tty" "/dev/null" "/data/home.local/sjspall/compilation-benchmarks" (PROJ-DIR))))
 
 (define (lookup-file-descriptor table fd func)
   (hash-ref table fd (lambda () fd)))
@@ -642,7 +642,7 @@
    
 ;; convert generic system call into specific system call
 ;; ignore calls that resulted in an error.
-(define (process-syscalls-pid pid cdir_ table_ syscalls)
+(define (process-syscalls-pid pid cdir_ table_ syscalls sorted-keys)
   (when (debug?)
 	(printf "processing syscalls for pid ~a\n" pid))
   (cond
@@ -667,8 +667,8 @@
 				  (error 'process-syscalls-pid "Don't expect to process pid's that don't have unique ids attached.")]))
 	    (when (= (string->number (car (string-split pid "_"))) 25640)
 		  (printf "sc-fork-pid is ~a\n" (sc-fork-pid res)))
-	    (define newpid (get-next-pid (sc-fork-pid res) last-tstamp (sequence->list (in-hash-keys syscalls))))
-	    (define fork-calls (process-syscalls-pid newpid cdir ntable syscalls))
+	    (define newpid (get-next-pid (sc-fork-pid res) last-tstamp sorted-keys))
+	    (define fork-calls (process-syscalls-pid newpid cdir ntable syscalls sorted-keys))
 	    (define recur (loop (or ndir cdir) ntable (cdr scs)))
 	    (if (and fork-calls recur)
 		(append (cons res fork-calls) recur)
@@ -681,7 +681,7 @@
    [else
     #f]))
 
-(define (get-next-pid pid last-tstamp list-of-keys)
+(define (get-next-pid pid last-tstamp sorted-list-of-keys)
   ;; search list of keys for pid_closet-timestamp-to-last-tstamp
 
   (define (this-one? k)
@@ -690,16 +690,19 @@
      [(= 2 (length ls))
       (cond
        [(equal? pid (string->number (car ls)))
-        (printf "pid is equal ~a\n" pid)
-	(printf "last tstamp is ~a\n" last-tstamp)
-	(printf "considering tstamp ~a\n" (cadr ls))
+        (when (debug?)
+	      (printf "pid is equal ~a\n" pid)
+	      (printf "last tstamp is ~a\n" last-tstamp)
+	      (printf "considering tstamp ~a\n" (cadr ls)))
 	(> (string->number (cadr ls))
 	   (string->number last-tstamp))]
        [else
-	(printf "pids are not equal ~a\n" (car ls))
+	(when (debug?)
+	      (printf "pids are not equal ~a\n" (car ls)))
 	#f])]
      [else
-      (printf "not correct length\n")
+      (when (debug?)
+	    (printf "not correct length\n"))
       #f]))
 
   (define (helper lok)
@@ -711,18 +714,19 @@
      [else
       (helper (cdr lok))]))
 
-  (helper (sort list-of-keys < #:key (lambda (k)
-				       (define tmp (string-split k "_"))
-				       (if (= 2 (length tmp))
-					   (string->number (cadr tmp))
-					   0)))))
-    
+  (helper sorted-list-of-keys))
 
 
 ;; determines what the inputs/outputs are.
 ;; also returns ins and outs for pid's created via fork/clone by pid
 (define (process-in-out-pid pid cdir syscalls)
-  (define calls (process-syscalls-pid pid cdir (hash) syscalls))
+  (define sorted-keys (sort (sequence->list (in-hash-keys syscalls))
+			    < #:key (lambda (k)
+				      (define tmp (string-split k "_"))
+				      (if (= 2 (length tmp))
+					  (string->number (cadr tmp))
+					  0))))
+  (define calls (process-syscalls-pid pid cdir (hash) syscalls sorted-keys))
   (if calls
       (for/fold ([in '()]
                  [out '()])
