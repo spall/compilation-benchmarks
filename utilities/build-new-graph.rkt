@@ -178,7 +178,7 @@ each thing in the sublist;  so create a target for each thing in sublist....
 		       [(intersect? outs is)
 			(values can (cons (car crs) cant))]
 		       [else
-			(values (cons (car crs) can) cant)]))))]
+		       	(values (cons (car crs) can) cant)]))))]
 	       [else ;; no info for this one
 		(call-with-values (lambda () (loop (cdr crs)))
 		  (lambda (can cant)
@@ -264,15 +264,20 @@ each thing in the sublist;  so create a target for each thing in sublist....
   (hash-set! new-targets new-tid
     	     (target (target-id t) (target-name t) (target-mfile t) (target-phony? t) (target-type t) '() (target-data t)))
 
-  (define data (target-data t))
+  (define data_ (target-data t))
   (define-values (ins outs)
     (cond
-     [(not (rusage-data? data))
-      (values '() '())]
-     [(hash-ref syscalls (rusage-data-pid data) #f)
-      (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
-     [else ;; no info
-      (values #f #f)]))
+     [(empty? data_)
+      (values #f #f)]
+     [else
+      (cond
+       [(not (rusage-data? data))
+	(values '() '())]
+       [(hash-ref syscalls (rusage-data-pid data) #f)
+	(printf "processing in/outs <~a,~a>\n" (target-name t) (target-mfile t))
+	(process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls)]
+       [else ;; no info
+	(values #f #f)])]))
 
   (values new-tid ins outs))
 

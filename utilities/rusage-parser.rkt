@@ -144,7 +144,7 @@
       
       (set-targetid-mfile! tid (car dirs-local)) ;; TODO car dirs-local needs to be a dir/makefile path
       (set-target-mfile! t (car dirs-local))
-      (set-target-data! t 0)      
+      (set-target-data! t (list 0))      
       (set-target-phony?! t phony?)
 
       (unless (empty? submakes-local)
@@ -174,6 +174,8 @@
 	  ['file
 	   (void)]))
       
+      ;; use remade when adding target to graph to increment how many times it was run.
+
       (if (cadr prqs?-local)
           (add-dependency parent tid)
           (add-recipe parent tid)))
@@ -317,7 +319,7 @@
 	 (define ntarget (create-target tname))
 	 (set-target-mfile! ntarget (car dirs-local))
          ;; add data to target
-         (set-target-data! ntarget 0)
+         (set-target-data! ntarget (list 0))
 	 (add-target-to-makegraph mgraph ntarget-id ntarget)
 
          
@@ -485,7 +487,7 @@
 		    (define shcall-targetid (create-targetid (symbol->string (gensym "SHCALL")) "top"))
                     (define shcall-target (create-target (targetid-name shcall-targetid)))
                     (set-target-mfile! shcall-target "top") ;; this is probably wrong
-                    (set-target-data! shcall-target info)
+                    (set-target-data! shcall-target (list info))
 		    (set-target-phony?! shcall-target #t)
                     (add-target-to-makegraph mgraph shcall-targetid shcall-target)
 		    

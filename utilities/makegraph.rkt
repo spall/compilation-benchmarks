@@ -93,7 +93,7 @@
   (recur (edge-end e) port)
   (when mode (write-string ">" port)))
 
-(struct edge (end type id) ;; end is name?
+(struct edge (end type id) ;; end is targetid
   #:methods gen:custom-write
   [(define write-proc edge-print)]
   #:mutable #:transparent)
@@ -128,7 +128,7 @@
 
 ;; adds a recipe edge
 (define (add-recipe add-to tid)
-  (set-target-out-edges! add-to (cons (edge tid 'seq (get-edge-id))
+  (set-target-out-edges! add-to (cons (edge tid 'seq (get-edge-id)) 
   			 	      (target-out-edges add-to))))
 
 ;; adds a dependency edge
@@ -195,8 +195,8 @@
      [(equal? t1 t2) ;; exactly the same
       #t]
      [(and (shcall-target? t1) (shcall-target? t2)) ;; might be same shell-command
-      (define d1 (target-data t1))
-      (define d2 (target-data t2))
+      (define d1 (car (target-data t1))) 
+      (define d2 (car (target-data t2)))
       (and (equal? (rusage-data-cmd d1) (rusage-data-cmd d2))
 	   (equal? (rusage-data-dir d1) (rusage-data-dir d2)))]
      [(and (fake-target? t1) (fake-target? t2))  ;; might be same fake target
@@ -227,6 +227,38 @@
      [else
       #f]))
 
+  (define (combine-shcall-targets t1 t2)
+    (define (helper t e)
+      (let loop ([es (target-out-edges t)])
+	(cond
+	 [(empty? es)
+	  (error 'combine-shcall-targets "Did not find ~a" e)]
+	 [(and (equal? (edge-type (car es)) (edge-type e))
+	       (same-target? (get-target graph (edge-end (car es)))
+			     (get-target graph (edge-end e))))
+	  (combine-shcall-targets (get-target graph (edge-end (car es)))
+				  (get-target graph (edge-end e)))]
+	 [else
+	  (loop (cdr es))])))
+
+    (cond
+     [(equal? t1 t2) ;; exactly the same
+      (void)]
+     [(and (shcall-target? t1) (shcall-target? t2))
+      (set-target-data! t1 (append (target-data t1) (target-data t2)))]
+     [(and (fake-target? t1) (fake-target? t2))
+      (for-each (lambda (e)
+		 ;; find appropriate edge in t1 and call combine-shcall-targets on the ends
+		 (helper t1 e))
+	       (target-out-edges t2))]
+     [(and (equal? (target-name t1) (target-name t2))
+	   (equal? (target-mfile t1) (target-mfile t2)))
+      (for-each (lambda (e)
+		 (helper t1 e))
+	       (target-out-edges t2))]
+     [else
+      (error 'combine-shcall-targets "Not the same ~a ~a" t1 t2)]))
+
   ;; t1 is exisiting target already in graph
   (define (maybe-merge t1 t2)
     (if (andmap (lambda (e)
@@ -235,20 +267,23 @@
 	        (target-out-edges t2))
         (for-each (lambda (e)
 		    (unless (has-edge? t1 e)
-		      (add-dependency t1 (edge-end e))))
+			    (add-dependency t1 (edge-end e))))
 		  (reverse (target-out-edges t2)))
         #f))   
 
   (cond
     [(hash-ref targets tid #f) =>
      (lambda (tmp)
-       (when  (and (not (empty? (target-out-edges t))) ;; if out edges are empty then this is a subset
-       	           (not (same-target? tmp t)))
-         (cond
-	  [(maybe-merge tmp t)
-	   (printf "Merged target <~a,~a>" (targetid-name tid) (targetid-mfile tid))]
-	  [else
-           (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))])))]
+       (when (not (empty? (target-out-edges t)))
+	     (cond
+	      [(same-target? tmp t)
+	       ;; need to combine data's from shcalls.
+	       ;; so we can keep track of how many times the shcall ran for work/span calcs
+	       (combine-shcall-targets tmp t)]
+	      [(maybe-merge tmp t)
+	       (printf "Merged target <~a,~a>" (targetid-name tid) (targetid-mfile tid))]
+	      [else
+	       (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))])))]
     [else
      (hash-set! targets tid t)]))
 

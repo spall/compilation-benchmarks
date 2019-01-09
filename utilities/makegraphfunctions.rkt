@@ -3,6 +3,8 @@
 (require racket/list
          racket/string
          racket/match
+	 racket/sequence
+	 data/bit-vector
          "makegraph.rkt"
          "flags.rkt"
          "process-syscalls.rkt"
@@ -14,13 +16,18 @@
          collapse-targets
          work
          span
+	 build-span-graph
          parallel-slackness
          predicted-speed-upper
          predicted-speed-lower
 	 predicted-speed-perfect-linear
          verify-edges
 	 longest-leaf         
-         print-graph)
+         print-graph
+	 print-targets-most-to-least-build
+	 print-make-targets-most-to-least-build
+	 print-intersections-of-span-build)
+
 
 (define (hash-add h1 h2)  
   (for ([(key value) (in-hash h2)])
@@ -41,37 +48,156 @@
     (work-graph graph)))
 
 (define (work-graph graph)
-  (define visited (make-hash))  
+  (define counted (make-hash))
 
   (define (node-work node-id)
     (define node (get-target graph node-id))
     (cond
-      [(or (target-phony? node) (equal? target-type 'name) 
-      	   (not (hash-ref visited node-id #f)))
-       (define node (get-target graph node-id))
-       
-       (hash-set! visited node-id #t)
-       (if (leaf-node? node)
-       	   (leaf-node-work node)
-	   (non-leaf-node-work node))]
-      [else
-       0]))
+     [(leaf-node? node)
+      (define c (hash-ref counted node 0))
+      (define l (length (target-data node)))
+      (if (> l c)
+	  (begin0 (leaf-node-work node c)
+		  (hash-set! counted node (+ 1 c)))
+	  0)]
+     [else
+      (non-leaf-node-work node)]))
 
-  (define (leaf-node-work node)
+  (define (leaf-node-work node i)
     (define data (target-data node))
     (cond
-      [(rusage-data? data)
-       (rusage-data-elapsed data)]
-      [(number? data)
-       data]
-      [else
-       (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
+     [(empty? data)
+      (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]
+     [else
+      (define idata (list-ref data i))
+      (cond
+       [(rusage-data? idata)
+	(rusage-data-elapsed idata)]
+       [(number? idata)
+	idata]
+       [else
+	(error 'leaf-node-work "Unrecognized data ~a ~a" idata node)])]))
 
   (define (non-leaf-node-work node)
     (for/sum ([e (reverse (target-out-edges node))])
-      (node-work (edge-end e))))
+	     (node-work (edge-end e))))
 
   (node-work (makegraph-root graph)))
+
+(define (intersect ls1 ls2)
+  (cond
+   [(empty? ls1)
+    '()]
+   [(member (car ls1) ls2)
+    (cons (car ls1) (intersect (cdr ls1) ls2))]
+   [else
+    (intersect (cdr ls1) ls2)]))
+
+(define (print-intersections-of-target t graph syscalls)
+  (cond
+   [(empty? (target-out-edges t)) ;; leaf
+    (define data_ (target-data t))
+    (cond
+     [(empty? data_)
+      (printf "<~a,~a> doesn't have rusage-data\n\n" (target-name t) (target-mfile t))
+      (values '() '())]
+     [else
+      (define data (car data_))
+      (cond
+       [(rusage-data? data) ;;  Get ins and outs
+	;; look up calls in syscalls
+	(cond
+	 [(hash-ref syscalls (rusage-data-pid data) #f)
+	  (define-values (tmp1 tmp2) (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls))
+	  (values tmp1 tmp2)]
+	 [else
+	  (printf "no entry in syscalls for pid ~a\n\n" (rusage-data-pid data))
+	  (values #f #f)])] ;; no entry 
+       [else
+	(printf "<~a,~a> doesn't have rusage-data\n\n" (target-name t) (target-mfile t))
+	(values '() '())])])] ;; we don't know
+   [else 
+    (printf "Target <~a,~a>: \n\n" (target-name t) (target-mfile t))
+    ;; loop through the edges; they should be in the correct order
+    ;; want to go in reverse order 
+    (let loop ([es (target-out-edges t)]
+	       [lastt #f]
+	       [last-ins '()]
+	       [last-outs '()])
+      (cond
+       [(empty? es)
+	(values '() '())]
+       [else
+	(define t2 (get-target graph (edge-end (car es))))
+	(define-values (ins outs) (print-intersections-of-target t2 graph syscalls))
+	(define t2-cmd (if (and (not (empty? (target-data t2)))
+				(rusage-data? (car (target-data t2))))
+			   (rusage-data-cmd (car (target-data t2)))
+			   ""))
+	(if outs
+	    (when lastt
+	    	  (define lastt-cmd (if (and (not (empty? (target-data lastt)))
+					     (rusage-data? (car (target-data lastt))))
+					(rusage-data-cmd (car (target-data lastt)))
+					""))
+		  (cond
+		   [last-ins
+		    (define in (intersect outs last-ins))
+		    (when (empty? in)
+			  (printf "first: ~a\n" t2)
+			  (printf "outs: ~a\n" outs)
+			  (printf "2nd: ~a\n" lastt)
+			  (printf "last-ins: ~a\n" last-ins))
+		    (printf "Intersection of target <~a,~a, cmd: ~a> which ran first and target <~a,~a, cmd: ~a> which ran second is: ~a\n\n" (target-name t2) (target-mfile t2) t2-cmd (target-name lastt) (target-mfile lastt) lastt-cmd in)]
+		   [else
+		    (printf "Don't have input information for target <~a,~a> so cnanot consider moving it to run in parallel with target <~a,~a>.\n\n" (target-name lastt) (target-mfile lastt) (target-name t2) (target-mfile t2))]))
+	    (when lastt
+		  (printf "Don't have output information for target <~a,~a> so cannot consider moving target <~a,~a> to be in parallel.\n\n" (target-name t2) (target-mfile t2) (target-name lastt) (target-mfile lastt))))
+
+	(cond
+	 [(= 1 (length es))
+	  (values ins outs)]
+	 [else
+	  (call-with-values (lambda () (loop (cdr es)
+					     t2 ins outs))
+	    (lambda (ins2 outs2)
+	      (values (and ins ins2 (append ins ins2))
+		      (and outs outs2 (append outs outs2)))))])]))]))
+
+(define (print-intersections-of-span-graph g syscalls)
+  (printf "Printing intersections of root target\n\n")
+  (print-intersections-of-target (get-target g (makegraph-root g)) g syscalls))
+
+(define (print-intersections-of-span-build b syscalls)
+  (for ([mg (buildgraph-makegraphs b)])
+       (print-intersections-of-span-graph mg syscalls)))
+
+(define (work-of-target t graph)
+  ;; for each edge call work of target
+  (cond
+   [(empty? (target-out-edges t)) ;; leaf
+    (define data (target-data t))
+    (cond
+     [(empty? data)
+      0]
+     [(rusage-data? (car data))
+      (rusage-data-elapsed (car data))]
+     [(number? (car data))
+      (car data)]
+     [else
+      0])]
+   [else
+    (printf "Target <~a,~a>: \n\n" (target-name t) (target-mfile t))
+    (define tmp (for/sum ([e (target-out-edges t)])
+			 (define t2 (get-target graph (edge-end e)))
+			 (define tmp (work-of-target t2 graph))
+			 (printf "Target <~a,~a> is ~a and it's work is ~a.\n" (target-name t2) (target-mfile t2)
+				 (if (equal? 'dep (edge-type e))
+				     "Dependency"
+				     "Recipe") tmp)
+			 tmp))
+    (printf "Done with target <~a,~a> \n\n" (target-name t) (target-mfile t))
+    tmp]))
 
 (define (span build)
   (for/sum ([graph (buildgraph-makegraphs build)])
@@ -94,61 +220,233 @@
      [else
       (cond
         [(leaf-node? node)
-	 (define tmp (leaf-node-span node))
-	 (hash-set! cache node-id tmp)
+	  (define tmp (leaf-node-span node))
+	   (hash-set! cache node-id tmp)
          (values tmp (hash-set ancestors node-id #t))]
         [else
-	 (define-values (tmp a) (non-leaf-node-span node (hash-set ancestors node-id #t)))
-	 (hash-set! cache node-id tmp)
-	 (values tmp a)])]))
+	  (define-values (tmp a) (non-leaf-node-span node (hash-set ancestors node-id #t)))
+	   (hash-set! cache node-id tmp)
+	    (values tmp a)])]))
        
   (define (leaf-node-span node)
     (define data (target-data node))
     (cond
-      [(rusage-data? data)
-       (rusage-data-elapsed data)]
-      [(number? data)
-       data]
-      [else
-       (error 'leaf-node-span "Unrecognized data ~a" data)]))
+     [(empty? data)
+      (error 'leaf-node-span "Unrecognized data ~a" data)]
+     [(rusage-data? (car data))
+      (rusage-data-elapsed (car data))]
+     [(number? (car data))
+      (car data)]
+     [else
+      (error 'leaf-node-span "Unrecognized data ~a" (car data))]))
 
   (define (non-leaf-node-span node ancestors)
     (define-values (m s a) ;; m is span of dependencies and s is sum of span of recipes
       (for/fold ([max_ 0]
                  [sum 0]
+		  [ancestors_ ancestors])
+                ([e (reverse (target-out-edges node))])
+        (define nid (edge-end e))
+	(cond
+	   [(equal? 'dep (edge-type e))
+	       (define-values (span_ a) (node-span nid ancestors))
+	          (values (max max_ span_) sum (merge-ancestors ancestors_ a))]
+	     [else
+           (define-values (span_ a) (node-span nid ancestors_))
+	      (values max_ (+ sum span_) a)])))
+
+    (values (+ m s) a))
+
+  (define-values (val _) (node-span (makegraph-root graph) (hash)))
+val)
+
+(define (print-make-targets-most-to-least-graph g total)
+  (define targets (makegraph-targets g))
+  (define ls (for/fold ([ls '()])
+		       ([t (in-hash-values targets)])
+		       ;; caculate span of target that aren't shellcalls
+		       (cond
+			[(empty? (target-out-edges t))
+			 ls]
+			[else
+			 (define s (work-of-target t g))
+			 (cons (cons s t) ls)])))
+
+  ;; sort ls
+  (define sorted (sort ls > #:key car))
+  ;; print them out
+  (for ([p sorted])
+       (define prctg (* 100 (exact->inexact (/ (car p) total))))
+       (printf "Target <~a,~a> is ~a% of total.\n\n" (target-name (cdr p)) (target-mfile (cdr p)) prctg)))
+
+(define (print-make-targets-most-to-least-build build total)
+  (for ([mg (buildgraph-makegraphs build)])
+       (printf "Targets of top level make\n")
+       (print-make-targets-most-to-least-graph mg total)))
+
+(define (print-targets-most-to-least-build build total)
+  (for ([mg (buildgraph-makegraphs build)])
+       (printf "Targets of top level make\n")
+       (print-targets-most-to-least mg total)))
+
+(define (sort-targets-by-time graph)
+  (define targets (makegraph-targets graph))
+  (sort (sequence->list (in-hash-values targets))
+	> #:key (lambda (t)
+		  (define data (target-data t))
+		  (cond
+		   [(empty? data)
+		    0]
+		   [(rusage-data? (car data))
+		    (rusage-data-elapsed (car data))]
+		   [(number? (car data))
+		    (car data)]
+		   [else
+		    0]))))
+
+(define (print-targets-most-to-least graph total)
+  (define sorted (sort-targets-by-time graph))
+  (for ([t sorted])
+       (define ttime (cond
+		      [(empty? (target-data t))
+		       #f]
+		      [(rusage-data? (car (target-data t)))
+		       (rusage-data-elapsed (car (target-data t)))]
+		      [(number? (car (target-data t)))
+		       (car (target-data t))]
+		      [else
+		       #f]))
+       (define cmd-run (cond
+			[(empty? (target-data t))
+			 "No command saved as run."]
+			[(rusage-data? (car (target-data t)))
+			 (rusage-data-cmd (car (target-data t)))]
+			[else
+			 "No command saved as run."]))
+       (when ttime
+	     (define prctg (* 100 (exact->inexact (/ ttime total))))
+	     (printf "Target <~a,~a> is ~a% of total: ran ~a.\n\n" (target-name t) (target-mfile t) prctg cmd-run))))
+
+(define (build-span-graph build)
+  (define new-build (create-buildgraph))
+  (define span (for/sum ([graph (buildgraph-makegraphs build)])
+			(define-values (time new-makegraph) (build-span-makegraph graph))
+			(add-makegraph new-build new-makegraph)
+			time)) 
+  (values span new-build))
+
+(define (build-span-makegraph graph)
+  (define new-graph (create-makegraph))
+
+  (define cache (make-hash))  
+
+  ;; returns time and new target; list of new targets in its span and ancestors
+  (define (build-span-node node-id ancestors)
+    (define node (get-target graph node-id))
+    (cond
+     [(and (hash-ref ancestors node-id #f)
+           (or (target-phony? node) (equal? target-type 'name)))
+      (define tmp (hash-ref cache node-id))
+      
+      (values (car tmp) (cadr tmp) (cddr tmp) (hash-set ancestors node-id #t))]
+     [(hash-ref ancestors node-id #f)
+      (values 0 #f '() ancestors)]
+     [(hash-ref cache node-id #f) =>
+      (lambda (tri)
+	(define val (car tri))
+	(define new-node (cadr tri))
+	(define pairs (cddr tri))
+	(values val new-node pairs (hash-set ancestors node-id #t)))]
+     [else
+      (cond
+        [(leaf-node? node)
+	 (define-values (tmp new-node) (build-span-leaf-node node))
+	 (hash-set! cache node-id (cons tmp (cons new-node '()))) ;; what else should go in cache?
+         (values tmp new-node '() (hash-set ancestors node-id #t))]
+        [else
+	 (define-values (tmp new-node ls a) (build-span-non-leaf-node node (hash-set ancestors node-id #t)))
+	 (hash-set! cache node-id (cons tmp (cons new-node ls)))
+	 (values tmp new-node ls a)])]))
+       
+  ;; returns time and new target object
+  (define (build-span-leaf-node node)
+    (define new-node (target (target-id node) (target-name node) (target-mfile node) (target-phony? node) (target-type node) '() (target-data node)))
+    (define data (target-data node))
+    (cond
+     [(equal? "SHCALL10747" (target-name node))
+      (printf "yes?\n")
+      (values 0 new-node)]
+     [(empty? data)
+      (error 'leaf-node-span "Unrecognized data ~a" data)]
+     [(rusage-data? (car data))
+      (values (rusage-data-elapsed (car data)) new-node)]
+     [(number? (car data))
+      (values (car data) new-node)]
+     [else
+      (error 'leaf-node-span "Unrecognized data ~a" (car data))]))
+
+  ;; returns time and new target object list of new-targets in its span and ancestors
+  (define (build-span-non-leaf-node node ancestors)
+    
+    (define-values (m mnid mnode mpairs s recipeids recipenodes pairs a) ;; m is span of dependencies and s is sum of span of recipes
+      (for/fold ([max_ 0]
+		 [maxnid #f]
+		 [maxnode #f]
+		 [maxpairs '()]
+                 [sum 0]
+		 [recipeids '()]
+		 [recipenodes '()]
+		 [pairs '()]
 		 [ancestors_ ancestors])
                 ([e (reverse (target-out-edges node))])
         (define nid (edge-end e))
 	(cond
 	  [(equal? 'dep (edge-type e))
-	   (define-values (span_ a) (node-span nid ancestors))
-	   (values (max max_ span_) sum (merge-ancestors ancestors_ a))]
+	   (define-values (span_ newnode ps a) (build-span-node nid ancestors))
+	   (cond
+	    [(> span_ max_)
+	     (unless newnode 
+		     (error 'build-span-non-leaf-node "newnode is false"))
+	     (values span_ nid newnode ps sum recipeids recipenodes pairs
+		     (merge-ancestors ancestors_ a))]
+	    [else	     
+	     (values max_ maxnid maxnode maxpairs sum recipeids recipenodes pairs  
+		     (merge-ancestors ancestors_ a))])]
 	  [else
-           (define-values (span_ a) (node-span nid ancestors_))
-	   (values max_ (+ sum span_) a)])))
+           (define-values (span_ newnode ps a) (build-span-node nid ancestors_))
+	   
+	   (values max_ maxnid maxnode maxpairs (+ sum span_) (cons nid recipeids)
+		   (cons newnode recipenodes) (append ps pairs) a)])))
 
-    (values (+ m s) a))
+    (define new-node (target (target-id node) (target-name node) (target-mfile node) (target-phony? node)
+			     (target-type node) '() (target-data node)))
+    (when mnid
+	  (add-dependency new-node mnid))
+    (for-each (lambda (id)
+		(add-recipe new-node id))
+	      (reverse recipeids))
+    (values (+ m s) new-node (append (foldl (lambda (id t accu)
+					      (if t
+						  (cons (cons id t) accu)
+						  accu))
+					    '()
+					    recipeids
+					    recipenodes) (if mnid
+							     (cons (cons mnid mnode) (append mpairs pairs))
+							     (append mpairs pairs)))
+	    a))
 
-  (define-values (val _) (node-span (makegraph-root graph) (hash)))
-  val)
-
-#|
-(define (all-paths graph)
-  (define startnode (get-target (makegraph-targets) (makegraph-root graph)))
-
-  (define (all-paths-leaf-node node)
-    ;; only one path...
-    (define data (target-data node))
-    (cond
-      [(rusage-data? data)
-       (list (rusage-data-elapsed data))]
-      [(number? data)
-       (list data)]
-      [else
-       (error 'all-paths-leaf-node "Did not recognize data ~a" data)]))
-
-  (define (all-paths-non-leaf-node node)
-  |#  
+  (define-values (time new-root span-path-nodes _)
+    (build-span-node (makegraph-root graph) (hash)))
+  ;; add span-path-nodes to new graph
+  (for-each (lambda (p)
+	      (define id (car p))
+	      (define t (cdr p))
+	      (hash-set! (makegraph-targets new-graph) id t))
+	    span-path-nodes)
+  (hash-set! (makegraph-targets new-graph) (makegraph-root graph) new-root)
+  (set-makegraph-root! new-graph (makegraph-root graph))
+  (values time new-graph))
 
 (define (merge-ancestors h1 h2)
   (hash-union h1 h2 #:combine/key (lambda (k a b) #t)))
