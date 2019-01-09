@@ -28,6 +28,40 @@
 (struct sc-unlink (name))
 (struct sc-fork (pid))
 
+;; resolve-symlink to a fixed point
+(define (resolve-symlink p)
+  (define tmp (resolve-path p))
+  (cond
+   [(equal? tmp p)
+    p]
+   [(absolute-path? tmp)
+    (resolve-symlink tmp)]
+   [else
+    (define-values (base name _) (split-path p))
+    (when (equal? 'up name)
+	  (error 'resolve-symlink "Previous directory is symlink? ~a" p))
+    (resolve-symlink (simplify-path (path->complete-path tmp base)))]))
+			      
+;; follow symlinks
+(define (resolve-symlinks p_)
+  (define (helper p)
+    (define rp (resolve-symlink (simplify-path p)))
+    (define-values (base name _) (split-path rp))
+    (cond
+     [(equal? base 'relative)
+      (error 'resolve-symlinks "Should always be an absolute path ~a" p)]
+     [(equal? base (string->path "/"))
+      p]
+     [base
+      (path->string (path->complete-path name (resolve-symlinks base)))]
+     [else
+      p]))
+  (helper p_))
+
+;(resolve-symlinks (string->path "/data/home.local"))
+;(resolve-symlinks (string->path "/data/home.local/sjspall/tmp/tmpfilesym"))
+
+
 (define (remove-trailing-separator p)
   (string->path (string-trim (path->string p) "/" #:left? #f)))
 
@@ -39,7 +73,7 @@
      [(equal? base 'relative)
       (error 'all-dirs "Should always be an absolute path ~a" p)]
      [(equal? base (string->path "/"))
-      (helper base)]
+      '()]
      [base
       (cons (path->string (remove-trailing-separator base)) (helper base))]
      [else
@@ -55,7 +89,7 @@
 (define (files-to-ignore) (foldl (lambda (p accu)
 			         (append (cons p (all-dirs (string->path p))) accu))
 			       '()
-			       (list "/tmp" "/dev/tty" "/dev/null" "/data/home.local/sjspall/compilation-benchmarks" (PROJ-DIR))))
+			       (list "/tmp" "/dev/tty" "/dev/null" "/nix/other_data/home.local/sjspall/compilation-benchmarks" (resolve-symlinks (PROJ-DIR)))))
 
 (define (lookup-file-descriptor table fd func)
   (hash-ref table fd (lambda () fd)))
@@ -67,8 +101,8 @@
 (define (maybe-create-absolute-path fname fd cdir table func)
   (cond
    [(absolute-path? fname)
-    fname]
-   [(equal? fd "AT_FDCWD")
+    (resolve-symlinks fname)]
+   [(or (not fd) (equal? fd "AT_FDCWD"))
     (path->complete-path fname cdir)]
    [else
     (define fdnum (string->number fd))
@@ -152,12 +186,10 @@
 
      ;; Can't necessarily distinguish between file 
      ;; and directory so add to table regardless; if it isn't a directory then
-     ;; a later call that uses this fd as a directory should fail.
-     (define full-path (if (absolute-path? fname)
-     	     	       	   fname
-			   (path->complete-path fname cdir)))
-     
-     (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path)))
+  ;; a later call that uses this fd as a directory should fail.
+  (define full-path (maybe-create-absolute-path fname #f cdir table 'parse-open-syscall)) 
+  
+  (values (sc-open full-path read? write? fd) #f (hash-set table fd full-path)))
 
 (define (parse-openat-syscall scall cdir table)
   (define fd (string->number (string-trim (syscall-retval scall))))
@@ -193,9 +225,7 @@
 (define (parse-execve-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
-  (values (sc-execve (if (absolute-path? fname)
-			 fname
-			 (path->complete-path fname cdir)))
+  (values (sc-execve (maybe-create-absolute-path fname #f cdir table 'parse-execve-syscall))
           #f table))
 
 (define (parse-chdir-syscall scall cdir table)
@@ -207,9 +237,7 @@
 		 [else
 		  (error 'parse-syscall "Did not match ~a" expr)]))
 
-  (values #f (if (absolute-path? fpath)
-      	     	 fpath
-		 (path->complete-path fpath cdir))
+  (values #f (maybe-create-absolute-path fpath #f cdir table 'parse-chdir-syscall)
 	     table))
 
 (define (parse-fchdir-syscall scall cdir table)
@@ -224,9 +252,7 @@
 (define (parse-stat-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
-  (values (sc-stat (if (absolute-path? fname)
-      	  	       fname
-		       (path->complete-path fname cdir)))
+  (values (sc-stat (maybe-create-absolute-path fname #f cdir table 'parse-stat-syscall))
 	  #f table))
 
 (define (parse-fstat-syscall scall cdir table)
@@ -278,9 +304,7 @@
 (define (parse-readlink-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
-  (values (sc-readlink (if (absolute-path? fname)
-  	  	       	   fname
-			   (path->complete-path fname cdir)))
+  (values (sc-readlink (maybe-create-absolute-path fname #f cdir table 'parse-readlink-syscall))
           #f table))
 
 (define (parse-readlinkat-syscall scall cdir table)
@@ -294,9 +318,7 @@
 (define (parse-setxattr-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
-  (values (sc-setxattr (if (absolute-path? fname)
-      	  	       	   fname
-      			   (path->complete-path fname cdir)))
+  (values (sc-setxattr (maybe-create-absolute-path fname #f cdir table 'parse-setxattr-syscall))
           #f table))
 
 (define (parse-fsetxattr-syscall scall cdir table)
@@ -319,17 +341,13 @@
   (define expr (parse-expression (open-input-string (syscall-args scall))))
   (define fname (parse-chown-args expr))
   
-  (values (sc-chown (if (absolute-path? fname)
-  	  	    	fname
-			(path->complete-path fname cdir)))
+  (values (sc-chown (maybe-create-absolute-path fname #f cdir table 'parse-chown-syscall))
           #f table))
 
 (define (parse-chmod-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
 
-  (values (sc-chmod (if (absolute-path? fname)
-   	   	     	fname
-			(path->complete-path fname cdir)))
+  (values (sc-chmod (maybe-create-absolute-path fname #f cdir table 'parse-chmod-syscall))
 	   #f table))
 
 (define (parse-fchmod-syscall scall cdir table)
@@ -353,9 +371,7 @@
   (define expr (parse-expression (open-input-string (syscall-args scall))))
   (define-values (fname flags) (parse-access-args expr))
 
-  (values (sc-access (if (absolute-path? fname)
-  	  	     	 fname
-			 (path->complete-path fname cdir)))
+  (values (sc-access (maybe-create-absolute-path fname #f cdir table 'parse-access-syscall))
 	  #f table))   
 
 (define (parse-faccessat-syscall scall cdir table)
@@ -379,9 +395,7 @@
   ;; TODO need to do relative path versus absolute path.  Likely need to do this 
   ;; for some other system calls as well.
 
-  (values (sc-mkdir (if (absolute-path? path)
-  	  	    	path
-			(path->complete-path path cdir)))
+  (values (sc-mkdir (maybe-create-absolute-path path #f cdir table 'parse-mkdir-syscall))
 	  #f table))
 
 (define (parse-mkdirat-syscall scall cdir table)
@@ -402,13 +416,9 @@
 (define (parse-symlink-syscall scall cdir table)
   (define-values (target lpath) (parse-symlink-args (parse-expression (open-input-string (syscall-args scall)))))
 
-  (define nlpath (if (absolute-path? lpath)
-  	  	      	         lpath
-			         (path->complete-path lpath cdir)))
+  (define nlpath (maybe-create-absolute-path lpath #f cdir table 'parse-symlink-syscall))
   (define-values (dir _ __) (split-path nlpath))
-  (define ntarget (if (absolute-path? target)
-  	  	      target
-		      (path->complete-path target dir))) 
+  (define ntarget (maybe-create-absolute-path target #f dir table 'parse-symlink-syscall))
 
   (values (sc-symlink ntarget nlpath)
           #f table))
@@ -428,9 +438,7 @@
 
   (define nlpath (maybe-create-absolute-path lpath newdirfd cdir table 'parse-symlinkat-syscall))
   (define-values (dir _ __) (split-path nlpath))
-  (define ntarget (if (absolute-path? target)
-  	  	      target
-		      (path->complete-path target dir)))
+  (define ntarget (maybe-create-absolute-path target #f dir table 'parse-symlinkat-syscall))
 
   (values (sc-symlink ntarget nlpath)
           #f table))
@@ -439,20 +447,14 @@
   (define-values (old new) (parse-rename-args (parse-expression (open-input-string (syscall-args scall)))))
 
   (values (sc-rename
-  	    (if (absolute-path? old)
-	    	old
-		(path->complete-path old cdir))
-            (if (absolute-path? new)
-	    	new
-		(path->complete-path new cdir)))
+	   (maybe-create-absolute-path old #f cdir table 'parse-rename-syscall)
+	   (maybe-create-absolute-path new #f cdir table 'parse-rename-syscall))
           #f table))
 
 (define (parse-unlink-syscall scall cdir table)
   (define fname (car (args-parser 1 (open-input-string (syscall-args scall)))))
   
-  (values (sc-unlink (if (absolute-path? fname)
-  	  	     	 fname
-			 (path->complete-path fname cdir)))
+  (values (sc-unlink (maybe-create-absolute-path fname #f cdir table 'parse-unlink-syscall))
           #f table))
 
 (define (parse-unlinkat-syscall scall cdir table)
@@ -716,51 +718,61 @@
 
   (helper sorted-list-of-keys))
 
+;; will need to expand this.
+(define (cond? cmd_)
+  ;; does it begin with if or test?
+  (define cmd (string-trim cmd_))
+  (or (string-prefix? cmd "if") (string-prefix? cmd "test")))
 
 ;; determines what the inputs/outputs are.
 ;; also returns ins and outs for pid's created via fork/clone by pid
-(define (process-in-out-pid pid cdir syscalls)
-  (define sorted-keys (sort (sequence->list (in-hash-keys syscalls))
-			    < #:key (lambda (k)
-				      (define tmp (string-split k "_"))
-				      (if (= 2 (length tmp))
-					  (string->number (cadr tmp))
-					  0))))
-  (define calls (process-syscalls-pid pid cdir (hash) syscalls sorted-keys))
-  (if calls
-      (for/fold ([in '()]
-                 [out '()])
-                ([call calls])
-
-        (define-values (is os) (inputs-outputs call))
-
-	;; turn all paths into strings
-	(define string-is (map (lambda (i)
-			         (if (path? i)
-				     (path->string i)
-				     i))
-			       is))
-        (define string-os (map (lambda (o)
-			         (if (path? o)
-				     (path->string o)
-				     o))
-                               os))
-
-	;; remove things that should be ignored
-	(define nos (foldl (lambda (o accu)
-	              	     (if (member o (files-to-ignore))
-		      	     	 accu
-		     	  	 (cons o accu)))
-                           '()
-	          	   string-os))	
-	
-        (values (append (filter (lambda (x)
-     	     	     	          (not (member x in))) string-is)
-	                in)
-	        (append (filter (lambda (x)
-	     	     	          (not (member x out))) nos)
-		        out)))
-    (values #f #f)))
+(define (process-in-out-pid pid cdir_ syscalls cmd)
+  (cond
+   [(cond? cmd)
+    (values #f #f)]
+   [else
+    (define sorted-keys (sort (sequence->list (in-hash-keys syscalls))
+			      < #:key (lambda (k)
+					(define tmp (string-split k "_"))
+					(if (= 2 (length tmp))
+					    (string->number (cadr tmp))
+					    0))))
+    (define cdir (resolve-symlinks cdir_))
+    (define calls (process-syscalls-pid pid cdir (hash) syscalls sorted-keys))
+    (if calls
+	(for/fold ([in '()]
+		   [out '()])
+		  ([call calls])
+		  
+		  (define-values (is os) (inputs-outputs call))
+		  
+		  ;; turn all paths into strings
+		  (define string-is (map (lambda (i)
+					   (if (path? i)
+					       (path->string i)
+					       i))
+					 is))
+		  (define string-os (map (lambda (o)
+					   (if (path? o)
+					       (path->string o)
+					       o))
+					 os))
+		  
+		  ;; remove things that should be ignored
+		  (define nos (foldl (lambda (o accu)
+				       (if (member o (files-to-ignore))
+					   accu
+					   (cons o accu)))
+				     '()
+				     string-os))	
+		  
+		  (values (append (filter (lambda (x)
+					    (not (member x in))) string-is)
+				  in)
+			  (append (filter (lambda (x)
+					    (not (member x out))) nos)
+				  out)))
+	(values #f #f))]))
 
         
   
