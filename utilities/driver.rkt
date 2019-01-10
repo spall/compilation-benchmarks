@@ -6,7 +6,7 @@
          "strace-parser.rkt"
          "process-syscalls.rkt"
          "makegraphfunctions.rkt"
-         "build-new-graph.rkt"
+         "build-new-graph-optimal.rkt"
          "makegraph.rkt"
          "run-graph.rkt"
 	 "flags.rkt")
@@ -114,6 +114,10 @@
        [else
         (error 'driver "Expected '--rusage-data' flag")]))
 
+   (unless (empty? (buildgraph-makegraphs graph))
+		 (PROJ-DIR (targetid-mfile (makegraph-root (car (buildgraph-makegraphs graph))))))
+	 
+
    (when (dry-run-graph?)
 	 (printf "Doing a dry run of original graph.\n")
 	 (run-graph-dry graph))
@@ -132,13 +136,21 @@
    (when work_
      (printf "Work for original graph is ~a\n" work_))
    
-   (define span_ (if (span?)
-   	   	     (span graph)
-		     #f))
+   #;(define-values (span_ span-graph) (if (span?)
+					(values (span graph) #f)
+					(values #f #f)))
+
+   (define-values (span_ span-graph) (if (span?)
+					 (build-span-graph graph)
+					 (values #f #f)))
 
    (when span_
      (printf "Span for original graph is ~a\n" span_))
    
+   (when span-graph
+	 (print-targets-most-to-least-build span-graph span_)
+   	 #;(print-intersections-of-span-build span-graph syscall-info))
+
    (define parallelism_ (if (and work_ span_)
      	                    (/ work_ span_)
 			    #f))
@@ -160,9 +172,16 @@
        (printf "Work for new graph is ~a\n" nwork_))
 
 
-     (define nspan_ (if (span?)
-     	     	    	(span new-graph)
-			#f))
+     (printf "building span graph\n")
+     (define-values (nspan_ nspan-graph) (if (span?)
+					     (build-span-graph new-graph)
+					     (values #f #f)))
+
+     (printf "printing intersections of span\n")
+     (when nspan-graph
+	   (print-targets-most-to-least-build nspan-graph nspan_)
+	   (print-intersections-of-span-build nspan-graph syscall-info))
+
      (when nspan_
        (printf "Span for new graph is ~a\n" nspan_))
 
@@ -172,6 +191,9 @@
      (when nparallelism_
        (printf "Parallelism for new graph is ~a\n" nparallelism_))
 
+     (when (dry-run-graph?)
+	   (printf "Doing a dry run of the new graph.\n")
+	   (run-graph-dry new-graph))
 
      (when (run-new-graph?)
        (printf "Running new graph\n")

@@ -9,6 +9,39 @@
 
 (provide parse-rusage)
 
+#|  Currently there is  tid <--> target object
+
+    Want to move to   tid --> {to_1, to_2, .... , to_n} where n is the number of times the recipes of the target are run?  
+    Yes because the object isn't changed if the recipes aren't run. even if some dependency is run again for some reason.
+
+    Currently everytime a target is encountered; we try to create a new target and add it to graph
+    If that target already exists in the graph then shcall targets are potentially merged.
+
+    What I think we want to do is:
+      If the target is encountered and has not been rebuilt then we do not create a new target
+      and we just refer to the last target structure created for that tid.  
+
+      If the target is encountered and has been rebuilt then we want to create a new target
+      structure that points to the correct version of the dependencies
+      
+    I think there are two ways to implement this:
+      1.  add an extra field to edge struct which says which version of the target data structure
+          the tid refers 2
+          In this case a tid would point to a list and then the extra field in the edge would 
+          say where to go in the list to find the correct structure. 
+
+      2.  add an extra field to the tid structure which says which version of the target data
+          structure the tid referse to.  
+          This option would move us back to tid <--> target object; which might make updating 
+          the system simpler.  
+
+          Would then need to keep track of which number tid we were on.....; Could have another
+          hash table that went from original tid structure to the last id used.
+          
+          I think 2 seems better barring some unforseen implementation difficulty
+|#
+
+
 (define SHELLCOUNT 0)
 (struct shcall (cmd n dir num-submakes duplicate?) #:mutable #:transparent)
 (define (create-shcall cmd n dir)
@@ -123,6 +156,18 @@
 
 (define (parse-file fip)
   (define bgraph (create-buildgraph))
+  (define tid-version-counter (make-hash))
+
+  (define (next-version! p)
+    (define v (+ 1 (hash-ref tid-version-counter p -1)))
+    (hash-set! tid-version-counter p v)
+    v)
+
+  (define (current-version p)
+    (define v (hash-ref tid-version-counter p 0))
+    (when (= 0 v)
+	  (hash-set! tid-version-counter p 0))
+    v)
 
   (define really-submake? #f)
 
@@ -193,7 +238,11 @@
 	   (define new-mgraph (create-makegraph))
 	   (printf "Created a new mgraph ~a\n" line)
            (define tname (symbol->string (gensym "TOP")))
-           (define ntarget-id (create-targetid tname (car rest)))
+	   #|  Is it correct to have a new targetid + target each time we execute the same top-level make?
+	   |#
+	   
+           (define ntarget-id (create-targetid tname (car rest) 
+					       (next-version! (cons tname (car rest)))))
            (define ntarget (create-target tname))
 
            ;; need to parse cmd for -f / --file
@@ -269,13 +318,7 @@
 
          (read-file (struct-copy state st
                                  [ts (cdr ts-local)]
-                                 [prqs? (cdr prqs?-local)
-
-
-
-                     #;(if (car prqs?-local)
-                                            (cons #f (cdr prqs?-local))
-                                            prqs?-local)]))]
+                                 [prqs? (cdr prqs?-local)]))]
         [`("No" "need" "to" "remake" "target" ,target . ,rest)
          (define tname (clean-target-name target))
          (check-current-target tname t "No need to remake")
@@ -287,6 +330,7 @@
                                  [ts (cdr ts-local)]
                                  [prqs? (cdr prqs?-local)]))]
         [`(,submake "***" ,_ ,name "Error" . ,errnum)
+	 (error 'rusage-parser "Submake error ~a" line)
 	 (printf "matched something\n")
 
 	 (define tname (string-append "'" (string-trim name "]" #:left? #f)))
@@ -314,7 +358,8 @@
          ;; make has decided this target doesnt need to be considered. so
          ;; add it with a time of 0
          
-         (define ntarget-id (create-targetid tname (car dirs-local)))
+         (define ntarget-id (create-targetid tname (car dirs-local)
+					     (current-version (cons tname (car dirs-local)))))
 
 	 (define ntarget (create-target tname))
 	 (set-target-mfile! ntarget (car dirs-local))
@@ -411,7 +456,7 @@
          (define tname (clean-target-name target))
          ;; considering a new target.  MIGHT need to create a new target structure.
 	 
-         (define ntarget-id (create-targetid tname #f)) ;; haven't determined dir/makefile yet
+         (define ntarget-id (create-targetid tname #f #f)) ;; haven't determined dir/makefile yet
          (define ntarget (create-target tname))
 
          ;; increase submake depth by 1
@@ -461,8 +506,10 @@
                     ;; add edges to fake target.
                     ;; remove edges from current target.
                     ;; create  new fake node.
-		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
-                    (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
+		    (define tmp-name (symbol->string (gensym "FAKE")))
+		    (define tmp-FAKEid (create-targetid tmp-name "top" 
+							(next-version! (cons tmp-name "top"))))
+                    (define tmp-FAKE (create-target tmp-name))
                     (set-target-mfile! tmp-FAKE "top") ;; this is probably wrong
 		    
                     ;; add to graph
@@ -484,8 +531,10 @@
                    [else ;; if this is not a submake......
                     (set! SHELLCOUNT (+ 1 SHELLCOUNT))
 
-		    (define shcall-targetid (create-targetid (symbol->string (gensym "SHCALL")) "top"))
-                    (define shcall-target (create-target (targetid-name shcall-targetid)))
+		    (define tmp-name (symbol->string (gensym "SHCALL")))
+		    (define shcall-targetid (create-targetid tmp-name "top"
+							     (next-version! (cons tmp-name "top"))))
+                    (define shcall-target (create-target tmp-name))
                     (set-target-mfile! shcall-target "top") ;; this is probably wrong
                     (set-target-data! shcall-target (list info))
 		    (set-target-phony?! shcall-target #t)
@@ -555,8 +604,10 @@
                     (define last-edges (get-last-edges t count))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
-		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
-                    (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
+		    (define tmp-name (symbol->string (gensym "FAKE")))
+		    (define tmp-FAKEid (create-targetid tmp-name "top"
+							(next-version! (cons tmp-name "top"))))
+                    (define tmp-FAKE (create-target tmp-name))
                     (set-target-mfile! tmp-FAKE "top")
 		    
                     ;; add to graph
@@ -644,8 +695,10 @@
                     (define last-edges (get-last-edges t count))
                     ;; add edges to fake target.
                     ;; remove edges from current target.
-		    (define tmp-FAKEid (create-targetid (symbol->string (gensym "FAKE")) "top"))
-                    (define tmp-FAKE (create-target (targetid-name tmp-FAKEid)))
+		    (define tmp-name (symbol->string (gensym "FAKE")))
+		    (define tmp-FAKEid (create-targetid tmp-name "top"
+							(next-version! (cons tmp-name "top"))))
+                    (define tmp-FAKE (create-target tmp-name))
                     (set-target-mfile! tmp-FAKE "top")
 		    (set-target-phony?! tmp-FAKE #t)
                     ;; add to graph
