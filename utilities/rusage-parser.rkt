@@ -189,7 +189,7 @@
       
       (set-targetid-mfile! tid (car dirs-local)) ;; TODO car dirs-local needs to be a dir/makefile path
       (set-target-mfile! t (car dirs-local))
-      (set-target-data! t (list 0))      
+      (set-target-data! t 0)      
       (set-target-phony?! t phony?)
 
       (unless (empty? submakes-local)
@@ -204,23 +204,14 @@
 
       (define parent (cdr (cadr ts-local))) 
 
-      (define already-in-graph? (target-in-graph? mgraph tid))
-      (add-target-to-makegraph mgraph tid t)
-      (when already-in-graph?
-        (define tmp (get-target mgraph tid))
-	(match (target-type tmp)
-	  ['unknown 
-	   (if remade?
-	       (set-target-type! tmp 'name)
-	       (set-target-type! tmp 'file))]
-	  ['name
-	   (unless remade?
-	     (set-target-type! tmp 'file))]
-	  ['file
-	   (void)]))
       
-      ;; use remade when adding target to graph to increment how many times it was run.
-
+      (define nv (add-target-to-makegraph mgraph tid t (current-version (cons (targetid-name tid)
+									      (targetid-mfile tid)))))
+      (set-targetid-version! tid nv)
+      (hash-set! tid-version-counter (cons (targetid-name tid) (targetid-mfile tid)) nv)
+      
+      ;; add-target-to-makegraph updates tid with appropriate version number 
+      ;; it is either the one provided or the next number
       (if (cadr prqs?-local)
           (add-dependency parent tid)
           (add-recipe parent tid)))
@@ -296,7 +287,10 @@
 
          (define parent (cdr (cadr ts-local))) ;; should be <ROOT>
 
-	 (add-target-to-makegraph mgraph tid t)
+	 (define nv (add-target-to-makegraph mgraph tid t (current-version (cons (targetid-name tid) (targetid-mfile tid)))))
+	 (set-targetid-version! tid nv)
+	 (hash-set! tid-version-counter (cons (targetid-name tid) (targetid-mfile tid)) nv)
+
 	 (set-makegraph-root! mgraph tid)
 
 	 (add-makegraph bgraph mgraph)
@@ -364,8 +358,10 @@
 	 (define ntarget (create-target tname))
 	 (set-target-mfile! ntarget (car dirs-local))
          ;; add data to target
-         (set-target-data! ntarget (list 0))
-	 (add-target-to-makegraph mgraph ntarget-id ntarget)
+         (set-target-data! ntarget 0)
+	 (define nv (add-target-to-makegraph mgraph ntarget-id ntarget (current-version (cons tname (car dirs-local)))))
+	 (unless (= nv (current-version (cons tname (car dirs-local))))
+		 (error 'rusage-parser "Created new version number for pruned target ~a; ~a" ntarget-id nv))
 
          
          (if (car prqs?-local)
@@ -513,7 +509,9 @@
                     (set-target-mfile! tmp-FAKE "top") ;; this is probably wrong
 		    
                     ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
+                    (define nv (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE (targetid-version tmp-FAKEid)))
+		    (unless (= nv (targetid-version tmp-FAKEid))
+			    (error 'rusage-parser "Different version for new fake target ~a; ~a" tmp-FAKEid nv))
                     
                     (for ([last-edge last-edges])
 		      (remove-edge t last-edge)
@@ -536,10 +534,12 @@
 							     (next-version! (cons tmp-name "top"))))
                     (define shcall-target (create-target tmp-name))
                     (set-target-mfile! shcall-target "top") ;; this is probably wrong
-                    (set-target-data! shcall-target (list info))
+                    (set-target-data! shcall-target info)
 		    (set-target-phony?! shcall-target #t)
-                    (add-target-to-makegraph mgraph shcall-targetid shcall-target)
-		    
+                    (define nv (add-target-to-makegraph mgraph shcall-targetid shcall-target (targetid-version shcall-targetid)))
+		    (unless (= nv (targetid-version shcall-targetid))
+			    (error 'rusage-parser "Different version for new shell call ~a; ~a" shcall-targetid nv))
+
                     (add-recipe t shcall-targetid)
 
                     (read-file (struct-copy state st
@@ -611,7 +611,7 @@
                     (set-target-mfile! tmp-FAKE "top")
 		    
                     ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
+                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE (targetid-version tmp-FAKEid))
                     
                     (for ([last-edge last-edges])
 		      (remove-edge t last-edge)
@@ -702,7 +702,7 @@
                     (set-target-mfile! tmp-FAKE "top")
 		    (set-target-phony?! tmp-FAKE #t)
                     ;; add to graph
-                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE)
+                    (add-target-to-makegraph mgraph tmp-FAKEid tmp-FAKE (targetid-version tmp-FAKEid))
                     
                     (for ([last-edge last-edges])
 		      (remove-edge t last-edge)

@@ -60,10 +60,10 @@
 ;; makefile is absolute path + name of makefile this target was executed from
 ;; need this info because different makefiles of different names in same directory 
 ;; can have targets with same name
-(struct targetid (name mfile) #:mutable #:transparent)
+(struct targetid (name mfile version) #:mutable #:transparent)
 
-(define (create-targetid name mfile)
-  (targetid name mfile))
+(define (create-targetid name mfile version)
+  (targetid name mfile version))
 
 ;; out edges are recipes and deps
 (struct target (id name mfile phony? type out-edges data)
@@ -166,54 +166,58 @@
   (and (string-prefix? (target-name t) "FAKE")
        (equal? (target-mfile t) "top")))
 
-(define (shcall-target? t)
-  (and (string-prefix? (target-name t) "SHCALL")
-       (equal? (target-mfile t) "top"))) 
+(define (same-shcall? t1 t2)
+  (and (empty? (target-out-edges t1))
+       (empty? (target-out-edges t2))
+       (rusage-data? (target-data t1))
+       (rusage-data? (target-data t2))
+       (equal? (rusage-data-cmd (target-data t1))
+	       (rusage-data-cmd (target-data t2)))))
 
-(define (add-target-to-makegraph graph tid t)
+(define (add-target-to-makegraph graph tid t cv)
   (define targets (makegraph-targets graph))
   
-  (define (has-edge? t1 e)	  
+  (define (has-edge? t1 e)
     (ormap (lambda (e2)
 	     (and (equal? (edge-type e) (edge-type e2))
 		  (same-target? (get-target graph (edge-end e)) 
 				(get-target graph (edge-end e2)))))
  	   (target-out-edges t1)))
+  
+  (define (has-edge-2? t e)
+    (ormap (lambda (e2)
+	     ;; both are different versions of the same target
+	     ;; both are shcalls
+	     ;; or regular case of same-target
+	     (define tid1 (edge-end e))
+	     (define tid2 (edge-end e2))
+	     (or (and (equal? (targetid-name tid1) (targetid-name tid2))
+		      (equal? (targetid-mfile tid1) (targetid-mfile tid2)))
+		 (same-shcall? (get-target graph tid1)
+			       (get-target graph tid2))
+		 (same-target? (get-target graph tid1)
+			       (get-target graph tid2))))
+	   (target-out-edges t)))
+
+
+  (define (compare-targets t1 t2)
+    (for-each (lambda (e1)
+		(unless (has-edge-2? t2 e1)
+			(error 'compare-targets "Newer target <~a,~a> doesn't have edge ~a" (target-name t1) (target-mfile t1) e1)))
+	      (target-out-edges t1)))
 
   ;; how do we define the idea of "same" target?
   ;; exactly the same?
   ;; subset the same?
   ;; 1. exactly the same
   ;; 2. newest target is a "subset" of the old target
-  ;; 3. What about the case where we merge them?
-  ;;    If we merge them it is because the NEWEST target has more dependnecies than 
-  ;;    the old target because more dependencies were created while make was running
 
   ;; t1 and t2 are target objects
   (define (same-target? t1 t2)
     (cond
      [(equal? t1 t2) ;; exactly the same
       #t]
-     [(and (shcall-target? t1) (shcall-target? t2)) ;; might be same shell-command
-      (define d1 (car (target-data t1))) 
-      (define d2 (car (target-data t2)))
-      (and (equal? (rusage-data-cmd d1) (rusage-data-cmd d2))
-	   (equal? (rusage-data-dir d1) (rusage-data-dir d2)))]
-     [(and (fake-target? t1) (fake-target? t2))  ;; might be same fake target
-      ;; what makes a fake target the same?
-      ;; same as a non fake target?
-      (andmap (lambda (e)
-		(cond
-		 [(has-edge? t1 e)
-		  #t]
-		 [else
-		  (when (debug?)
-			(printf "Did not find edge ~a from target <~a,~> in target <~a,~a>\n"
-				e (target-name t2) (target-mfile t2) (target-name t1) (target-mfile t1)))
-		  #f]))
-	      (target-out-edges t2))]
-     [(and (equal? (target-name t1) (target-name t2))   ;; might be a subset; but then they need same name and file
-	   (equal? (target-mfile t1) (target-mfile t2)))
+     [(and (fake-target? t1) (fake-target? t2))
       (andmap (lambda (e)
 		(cond
 		 [(has-edge? t1 e)
@@ -227,65 +231,47 @@
      [else
       #f]))
 
-  (define (combine-shcall-targets t1 t2)
-    (define (helper t e)
-      (let loop ([es (target-out-edges t)])
-	(cond
-	 [(empty? es)
-	  (error 'combine-shcall-targets "Did not find ~a" e)]
-	 [(and (equal? (edge-type (car es)) (edge-type e))
-	       (same-target? (get-target graph (edge-end (car es)))
-			     (get-target graph (edge-end e))))
-	  (combine-shcall-targets (get-target graph (edge-end (car es)))
-				  (get-target graph (edge-end e)))]
-	 [else
-	  (loop (cdr es))])))
-
+  (define (same-target-driver? t1 t2)
     (cond
-     [(equal? t1 t2) ;; exactly the same
-      (void)]
-     [(and (shcall-target? t1) (shcall-target? t2))
-      (set-target-data! t1 (append (target-data t1) (target-data t2)))]
-     [(and (fake-target? t1) (fake-target? t2))
-      (for-each (lambda (e)
-		 ;; find appropriate edge in t1 and call combine-shcall-targets on the ends
-		 (helper t1 e))
-	       (target-out-edges t2))]
-     [(and (equal? (target-name t1) (target-name t2))
-	   (equal? (target-mfile t1) (target-mfile t2)))
-      (for-each (lambda (e)
-		 (helper t1 e))
-	       (target-out-edges t2))]
+     [(equal? t1 t2)
+      #t]
+     [(or (and (equal? (target-name t1) (target-name t2))
+	       (equal? (target-mfile t1) (target-mfile t2)))
+	  (and (fake-target? t1) (fake-target? t2)))
+      (andmap (lambda (e)
+		(cond
+		 [(has-edge? t1 e)
+		  #t]
+		 [else
+		  (when (debug?)
+			(printf "Did not find edge ~a from target <~a,~a> in target <~a,~a>\n"
+				e (target-name t2) (target-mfile t2) (target-name t1) (target-mfile t1)))
+		  #f]))
+	      (target-out-edges t2))]
      [else
-      (error 'combine-shcall-targets "Not the same ~a ~a" t1 t2)]))
+      #f]))
 
-  ;; t1 is exisiting target already in graph
-  (define (maybe-merge t1 t2)
-    (if (andmap (lambda (e)
-    	          (or (has-edge? t1 e)
-	              (equal? 'dep (edge-type e))))
-	        (target-out-edges t2))
-        (for-each (lambda (e)
-		    (unless (has-edge? t1 e)
-			    (add-dependency t1 (edge-end e))))
-		  (reverse (target-out-edges t2)))
-        #f))   
-
+  (define tmptid (create-targetid (targetid-name tid) (targetid-mfile tid) cv))
   (cond
-    [(hash-ref targets tid #f) =>
-     (lambda (tmp)
-       (when (not (empty? (target-out-edges t)))
-	     (cond
-	      [(same-target? tmp t)
-	       ;; need to combine data's from shcalls.
-	       ;; so we can keep track of how many times the shcall ran for work/span calcs
-	       (combine-shcall-targets tmp t)]
-	      [(maybe-merge tmp t)
-	       (printf "Merged target <~a,~a>" (targetid-name tid) (targetid-mfile tid))]
-	      [else
-	       (error 'add-target-to-makegraph "Target <~a,~a> already exists in makegraph. Edges ~a vs ~a" (targetid-name tid) (targetid-mfile tid) (target-out-edges tmp) (target-out-edges t))])))]
-    [else
-     (hash-set! targets tid t)]))
+   [(hash-ref targets tmptid #f) =>
+    (lambda (tmp)
+      ;; there is already a target object with cv. So determine if these are the same version 
+      ;; or if this is a newer version of the target.
+      (cond
+       [(or (empty? (target-out-edges t)) ;; same version
+	    (same-target-driver? tmp t))
+	cv]
+       [else
+	;; print differences if there are any in case important edges are missing from new target and we need to copy them.
+	(compare-targets tmp t)
+	(set-targetid-version! tmptid (+ 1 cv))
+	(hash-set! targets tmptid t)
+	(+ 1 cv)]))]
+   [else
+    (when (equal? "'cs.cp1250.po" (targetid-name tid))
+	  (printf "adding target with value ~a\n" cv))
+    (hash-set! targets tmptid t)
+    cv]))
 
 (define (get-target graph tid)
   (hash-ref (makegraph-targets graph) tid))

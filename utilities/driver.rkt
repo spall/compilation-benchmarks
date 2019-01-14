@@ -88,7 +88,7 @@
        (let ([graph (parse-rusage ru-file)])
          (let ([work_ (work graph)]
 	       [span_ (span graph)]
-	       [leaf_ (longest-leaf graph)])
+	       [leaf_ #f])
 	 (printf "~a ~a ~a\n" work_ span_ leaf_)
 	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
            

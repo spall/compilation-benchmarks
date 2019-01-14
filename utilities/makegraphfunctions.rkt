@@ -22,7 +22,6 @@
          predicted-speed-lower
 	 predicted-speed-perfect-linear
          verify-edges
-	 longest-leaf         
          print-graph
 	 print-targets-most-to-least-build
 	 print-make-targets-most-to-least-build
@@ -48,35 +47,30 @@
     (work-graph graph)))
 
 (define (work-graph graph)
-  (define counted (make-hash))
+  (define visited (make-hash))
 
   (define (node-work node-id)
     (define node (get-target graph node-id))
     (cond
+     [(hash-ref visited node #f)
+      0]
      [(leaf-node? node)
-      (define c (hash-ref counted node 0))
-      (define l (length (target-data node)))
-      (if (> l c)
-	  (begin0 (leaf-node-work node c)
-		  (hash-set! counted node (+ 1 c)))
-	  0)]
+      (hash-set! visited node #t)
+      (leaf-node-work node)]
      [else
+      (hash-set! visited node #t)
       (non-leaf-node-work node)]))
 
-  (define (leaf-node-work node i)
+  (define (leaf-node-work node)
     (define data (target-data node))
+    
     (cond
-     [(empty? data)
-      (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]
+     [(rusage-data? data)
+      (rusage-data-elapsed data)]
+     [(number? data)
+      data]
      [else
-      (define idata (list-ref data i))
-      (cond
-       [(rusage-data? idata)
-	(rusage-data-elapsed idata)]
-       [(number? idata)
-	idata]
-       [else
-	(error 'leaf-node-work "Unrecognized data ~a ~a" idata node)])]))
+      (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
 
   (define (non-leaf-node-work node)
     (for/sum ([e (reverse (target-out-edges node))])
@@ -108,7 +102,7 @@
 	;; look up calls in syscalls
 	(cond
 	 [(hash-ref syscalls (rusage-data-pid data) #f)
-	  (define-values (tmp1 tmp2) (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls))
+	  (define-values (tmp1 tmp2) (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls (rusage-data-cmd data)))
 	  (values tmp1 tmp2)]
 	 [else
 	  (printf "no entry in syscalls for pid ~a\n\n" (rusage-data-pid data))
@@ -143,11 +137,6 @@
 		  (cond
 		   [last-ins
 		    (define in (intersect outs last-ins))
-		    (when (empty? in)
-			  (printf "first: ~a\n" t2)
-			  (printf "outs: ~a\n" outs)
-			  (printf "2nd: ~a\n" lastt)
-			  (printf "last-ins: ~a\n" last-ins))
 		    (printf "Intersection of target <~a,~a, cmd: ~a> which ran first and target <~a,~a, cmd: ~a> which ran second is: ~a\n\n" (target-name t2) (target-mfile t2) t2-cmd (target-name lastt) (target-mfile lastt) lastt-cmd in)]
 		   [else
 		    (printf "Don't have input information for target <~a,~a> so cnanot consider moving it to run in parallel with target <~a,~a>.\n\n" (target-name lastt) (target-mfile lastt) (target-name t2) (target-mfile t2))]))
@@ -204,61 +193,54 @@
     (span-graph graph)))
 
 (define (span-graph graph)
-  (define cache (make-hash))  
+  (define cache (make-hash))
 
   (define (node-span node-id ancestors)
     (define node (get-target graph node-id))
     (cond
-     [(and (hash-ref ancestors node-id #f)
-           (or (target-phony? node) (equal? target-type 'name)))
-      (values (hash-ref cache node-id) (hash-set ancestors node-id #t))]
      [(hash-ref ancestors node-id #f)
       (values 0 ancestors)]
      [(hash-ref cache node-id #f) =>
       (lambda (val)
       (values val (hash-set ancestors node-id #t)))]
+     [(leaf-node? node)
+      (define tmp (leaf-node-span node))
+      (hash-set! cache node-id tmp)
+      (values tmp (hash-set ancestors node-id #t))]
      [else
-      (cond
-        [(leaf-node? node)
-	  (define tmp (leaf-node-span node))
-	   (hash-set! cache node-id tmp)
-         (values tmp (hash-set ancestors node-id #t))]
-        [else
-	  (define-values (tmp a) (non-leaf-node-span node (hash-set ancestors node-id #t)))
-	   (hash-set! cache node-id tmp)
-	    (values tmp a)])]))
+      (define-values (tmp a) (non-leaf-node-span node (hash-set ancestors node-id #t)))
+      (hash-set! cache node-id tmp)
+      (values tmp a)]))
        
   (define (leaf-node-span node)
     (define data (target-data node))
     (cond
-     [(empty? data)
-      (error 'leaf-node-span "Unrecognized data ~a" data)]
-     [(rusage-data? (car data))
-      (rusage-data-elapsed (car data))]
-     [(number? (car data))
-      (car data)]
+     [(rusage-data? data)
+      (rusage-data-elapsed data)]
+     [(number? data)
+      data]
      [else
-      (error 'leaf-node-span "Unrecognized data ~a" (car data))]))
+      (error 'leaf-node-span "Unrecognized data ~a" data)]))
 
   (define (non-leaf-node-span node ancestors)
     (define-values (m s a) ;; m is span of dependencies and s is sum of span of recipes
       (for/fold ([max_ 0]
                  [sum 0]
-		  [ancestors_ ancestors])
+		 [ancestors_ ancestors])
                 ([e (reverse (target-out-edges node))])
         (define nid (edge-end e))
 	(cond
-	   [(equal? 'dep (edge-type e))
-	       (define-values (span_ a) (node-span nid ancestors))
-	          (values (max max_ span_) sum (merge-ancestors ancestors_ a))]
-	     [else
-           (define-values (span_ a) (node-span nid ancestors_))
-	      (values max_ (+ sum span_) a)])))
+	 [(equal? 'dep (edge-type e)) ;; dependency/prereq
+	  (define-values (span_ a) (node-span nid ancestors))
+	  (values (max max_ span_) sum (merge-ancestors ancestors_ a))]
+	 [else ;; recipe
+	  (define-values (span_ a) (node-span nid ancestors_))
+	  (values max_ (+ sum span_) a)])))
 
     (values (+ m s) a))
 
   (define-values (val _) (node-span (makegraph-root graph) (hash)))
-val)
+  val)
 
 (define (print-make-targets-most-to-least-graph g total)
   (define targets (makegraph-targets g))
@@ -295,12 +277,10 @@ val)
 	> #:key (lambda (t)
 		  (define data (target-data t))
 		  (cond
-		   [(empty? data)
-		    0]
-		   [(rusage-data? (car data))
-		    (rusage-data-elapsed (car data))]
-		   [(number? (car data))
-		    (car data)]
+		   [(rusage-data? data)
+		    (rusage-data-elapsed data)]
+		   [(number? data)
+		    data]
 		   [else
 		    0]))))
 
@@ -308,19 +288,17 @@ val)
   (define sorted (sort-targets-by-time graph))
   (for ([t sorted])
        (define ttime (cond
-		      [(empty? (target-data t))
-		       #f]
-		      [(rusage-data? (car (target-data t)))
-		       (rusage-data-elapsed (car (target-data t)))]
-		      [(number? (car (target-data t)))
-		       (car (target-data t))]
+		      [(rusage-data? (target-data t))
+		       (rusage-data-elapsed (target-data t))]
+		      [(number? (target-data t))
+		       (target-data t)]
 		      [else
 		       #f]))
        (define cmd-run (cond
 			[(empty? (target-data t))
 			 "No command saved as run."]
-			[(rusage-data? (car (target-data t)))
-			 (rusage-data-cmd (car (target-data t)))]
+			[(rusage-data? (target-data t))
+			 (rusage-data-cmd (target-data t))]
 			[else
 			 "No command saved as run."]))
        (when ttime
@@ -344,11 +322,6 @@ val)
   (define (build-span-node node-id ancestors)
     (define node (get-target graph node-id))
     (cond
-     [(and (hash-ref ancestors node-id #f)
-           (or (target-phony? node) (equal? target-type 'name)))
-      (define tmp (hash-ref cache node-id))
-      
-      (values (car tmp) (cadr tmp) (cddr tmp) (hash-set ancestors node-id #t))]
      [(hash-ref ancestors node-id #f)
       (values 0 #f '() ancestors)]
      [(hash-ref cache node-id #f) =>
@@ -357,33 +330,26 @@ val)
 	(define new-node (cadr tri))
 	(define pairs (cddr tri))
 	(values val new-node pairs (hash-set ancestors node-id #t)))]
+     [(leaf-node? node)
+      (define-values (tmp new-node) (build-span-leaf-node node))
+      (hash-set! cache node-id (cons tmp (cons new-node '()))) ;; what else should go in cache?
+      (values tmp new-node '() (hash-set ancestors node-id #t))]
      [else
-      (cond
-        [(leaf-node? node)
-	 (define-values (tmp new-node) (build-span-leaf-node node))
-	 (hash-set! cache node-id (cons tmp (cons new-node '()))) ;; what else should go in cache?
-         (values tmp new-node '() (hash-set ancestors node-id #t))]
-        [else
-	 (define-values (tmp new-node ls a) (build-span-non-leaf-node node (hash-set ancestors node-id #t)))
-	 (hash-set! cache node-id (cons tmp (cons new-node ls)))
-	 (values tmp new-node ls a)])]))
+      (define-values (tmp new-node ls a) (build-span-non-leaf-node node (hash-set ancestors node-id #t)))
+      (hash-set! cache node-id (cons tmp (cons new-node ls)))
+      (values tmp new-node ls a)]))
        
   ;; returns time and new target object
   (define (build-span-leaf-node node)
     (define new-node (target (target-id node) (target-name node) (target-mfile node) (target-phony? node) (target-type node) '() (target-data node)))
     (define data (target-data node))
     (cond
-     [(equal? "SHCALL10747" (target-name node))
-      (printf "yes?\n")
-      (values 0 new-node)]
-     [(empty? data)
-      (error 'leaf-node-span "Unrecognized data ~a" data)]
-     [(rusage-data? (car data))
-      (values (rusage-data-elapsed (car data)) new-node)]
-     [(number? (car data))
-      (values (car data) new-node)]
+     [(rusage-data? data)
+      (values (rusage-data-elapsed data) new-node)]
+     [(number? data)
+      (values data new-node)]
      [else
-      (error 'leaf-node-span "Unrecognized data ~a" (car data))]))
+      (error 'leaf-node-span "Unrecognized data ~a" data)]))
 
   ;; returns time and new target object list of new-targets in its span and ancestors
   (define (build-span-non-leaf-node node ancestors)
@@ -401,23 +367,23 @@ val)
                 ([e (reverse (target-out-edges node))])
         (define nid (edge-end e))
 	(cond
-	  [(equal? 'dep (edge-type e))
-	   (define-values (span_ newnode ps a) (build-span-node nid ancestors))
-	   (cond
-	    [(> span_ max_)
-	     (unless newnode 
-		     (error 'build-span-non-leaf-node "newnode is false"))
-	     (values span_ nid newnode ps sum recipeids recipenodes pairs
-		     (merge-ancestors ancestors_ a))]
-	    [else	     
-	     (values max_ maxnid maxnode maxpairs sum recipeids recipenodes pairs  
-		     (merge-ancestors ancestors_ a))])]
-	  [else
-           (define-values (span_ newnode ps a) (build-span-node nid ancestors_))
-	   
-	   (values max_ maxnid maxnode maxpairs (+ sum span_) (cons nid recipeids)
-		   (cons newnode recipenodes) (append ps pairs) a)])))
-
+	 [(equal? 'dep (edge-type e))
+	  (define-values (span_ newnode ps a) (build-span-node nid ancestors))
+	  (cond
+	   [(> span_ max_)
+	    (unless newnode 
+		    (error 'build-span-non-leaf-node "newnode is false"))
+	    (values span_ nid newnode ps sum recipeids recipenodes pairs
+		    (merge-ancestors ancestors_ a))]
+	   [else	     
+	    (values max_ maxnid maxnode maxpairs sum recipeids recipenodes pairs  
+		    (merge-ancestors ancestors_ a))])]
+	 [else
+	  (define-values (span_ newnode ps a) (build-span-node nid ancestors_))
+	  
+	  (values max_ maxnid maxnode maxpairs (+ sum span_) (cons nid recipeids)
+		  (cons newnode recipenodes) (append ps pairs) a)])))
+    
     (define new-node (target (target-id node) (target-name node) (target-mfile node) (target-phony? node)
 			     (target-type node) '() (target-data node)))
     (when mnid
@@ -450,15 +416,6 @@ val)
 
 (define (merge-ancestors h1 h2)
   (hash-union h1 h2 #:combine/key (lambda (k a b) #t)))
-
-(define (longest-target root_ graph)
-  (void)) ;; todo
-
-(define (longest-leaf graph)
-  (void))
-
-(define (longest-recipe root_ graph)
-  (void))
 
 ;; factor by which the parallelism of the computation exceeds the number of processors
 (define (parallel-slackness graph pcount)
