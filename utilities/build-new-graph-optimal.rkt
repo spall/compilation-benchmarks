@@ -1,4 +1,4 @@
-#lang racket/base
+#lang errortrace racket/base
 
 (require racket/list
          racket/sequence
@@ -34,50 +34,29 @@
 (define (build-intersection-graph edges graph syscalls new-targets ins-cache outs-cache tname)
   
   (define igraph (make-hash))
-
-  (define-values (deps reps)
-    (let split ([es edges])
-      (cond
-       [(empty? es)
-	(values '() '())]
-       [else
-	(call-with-values (lambda () (split (cdr es)))
-	  (lambda (ds rs)
-	    (if (equal? 'dep (edge-type (car es)))
-		(values (cons (car es) ds) rs)
-		(values ds (cons (car es) rs)))))])))  
-
-  ;; create root node from deps if there are any
-  (define root
-    (let-values ([(tids ins outs)  
-		  (let process-deps ([ds (reverse deps)])
+  
+  (define-values (root reps)
+    (let-values ([(tids ins outs reps)
+		  (let split ([es edges])
 		    (cond
-		     [(empty? ds)
-		      (values '() '() '())]
+		     [(empty? es)
+		      (values '() '() '() '())]
 		     [else
-		      (define d (edge-end (car ds)))
-		      (define-values (ins outs)
-			(build-new-target d graph syscalls new-targets ins-cache outs-cache))
-		      
-		      (call-with-values (lambda () (process-deps (cdr ds)))
-			(lambda (tids is os)
-			  (values (cons d tids)
-				  (and ins is (append ins is))
-				  (and outs os (append outs os)))))]))])
-      (dnode tids ins outs '())))
+		      (call-with-values (lambda () (split (cdr es)))
+			(lambda (ts is os rs)
+			  (define t (edge-end (car es)))
+			  (define-values (ins outs)
+			    (build-new-target t graph syscalls new-targets ins-cache outs-cache))
+			  (cond
+			   [(equal? 'dep (edge-type (car es)))
+			    (values (cons t ts) 
+				    (and ins is (append ins is))
+				    (and outs os (append outs os)) rs)]
+			   [else
+			    (hash-set! igraph t (inode t ins outs (make-hash) (make-hash)))
+			    (values ts is os (cons (car es) rs))])))]))])
+      (values (dnode tids ins outs '()) reps)))
 	
-  ;; create nodes for each recipe
-  (let process-reps ([rs (reverse reps)])
-    (cond
-     [(empty? rs)
-      '()]
-     [else
-      (define r (edge-end (car rs)))
-      (define-values (ins outs)
-	(build-new-target r graph syscalls new-targets ins-cache outs-cache))
-      (hash-set! igraph r (inode r ins outs '() '()))
-      (process-reps (cdr rs))]))
-
   ;; now construct the graph
   (let construct-igraph ([rs reps]) ;; want to go through reps in reverse order.
     (unless (empty? rs)
@@ -93,7 +72,7 @@
 		    '()]
 		   [else
 		    (define in (car ins))
-		    (if (empty? (inode-in-edges in))
+		    (if (hash-empty? (inode-in-edges in))
 			(cons (inode-tid in) (loop (cdr ins)))
 			(loop (cdr ins)))])))
 		   
@@ -111,7 +90,7 @@
      [else
       (hash-set! levels (inode-tid r) l)])
 
-    (for ([oe (inode-out-edges r)])
+    (for ([oe (in-hash-keys (inode-out-edges r))])
 	 (levels-bfs (hash-ref igraph oe) (+ 1 l))))
 
 
@@ -119,12 +98,14 @@
        (levels-bfs (hash-ref igraph oe) 1))
   ;; repeat for each thing in new deps
   (for ([ndep ndeps])
-       (for ([oe (inode-out-edges (hash-ref igraph ndep))])
+       (for ([oe (in-hash-keys (inode-out-edges (hash-ref igraph ndep)))])
 	    (levels-bfs (hash-ref igraph oe) 1)))
   
   (define levels-ls (make-hash)) ;; level -> list of tids
   ;; make sure each target is only at the lowest level it appears
-  (for ([(tid l) (in-hash-pairs levels)])
+  (for ([p (in-hash-pairs levels)])
+       (define tid (car p))
+       (define l (cdr p))
        (cond
 	[(hash-ref levels-ls l #f) =>
 	 (lambda (ls)
@@ -156,15 +137,6 @@
 
   (values l0 ls all-ins all-outs))
 
-(define (member-recursive v ls-of-ls)
-  (cond
-   [(empty? ls-of-ls)
-    #f]
-   [(member v (car ls-of-ls))
-    #t]
-   [else
-    (member-recursive v (cdr ls-of-ls))]))
-
 (define (compare e es igraph root)
   (cond
    [(empty? es)
@@ -175,7 +147,7 @@
 	      (intersect? (dnode-ins root) (inode-outs in1)))
 	  ;; create an edge from root to in1
 	  (set-dnode-out-edges! root (cons (edge-end e) (dnode-out-edges root)))
-	  (set-inode-in-edges! in1 (cons 'root (inode-in-edges in1))))]
+	  (hash-set! (inode-in-edges in1) 'root #t))]
    [else
     ;; compare e to first thing in es
     (define in1 (hash-ref igraph (edge-end e)))
@@ -185,8 +157,8 @@
 	      (intersect? (inode-ins in1) (inode-outs in2))
 	      (intersect? (inode-outs in1) (inode-ins in2)))
 	  ;; create an edge from in2 to in1
-	  (set-inode-out-edges! in2 (cons (edge-end e) (inode-out-edges in2)))
-	  (set-inode-in-edges! in1 (cons (edge-end (car es)) (inode-in-edges in1))))
+	  (hash-set! (inode-out-edges in2) (edge-end e) #t)
+	  (hash-set! (inode-in-edges in1) (edge-end (car es)) #t))
     (compare e (cdr es) igraph root)]))
 
   
@@ -224,21 +196,6 @@
 	(printf "this non leaf node <~a,~a> is now a leaf\n" (target-name nt) (target-mfile nt)))
 
   (values ins outs))
-
-;; takes a list and a hash table;; collapses hash table and list into one
-(define (combine ls h)
-  (define new (make-hash))
-  (for ([hv (in-hash-values h)])
-       (for ([v hv])
-	    (hash-set! new v #t)))
-  (for ([lv ls])
-       (hash-set! new lv #t))
-
-  (for/fold ([tmp '()])
-  	    ([k (in-hash-keys new)])
-	    (if (list? k)
-		(error 'combine "k is a list")
-		(cons k tmp))))
 
 (define (leaf? t)
   (empty? (target-out-edges t)))
