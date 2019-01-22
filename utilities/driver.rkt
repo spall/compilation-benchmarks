@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 
 (require racket/cmdline
          racket/list
@@ -79,33 +79,29 @@
      (error 'driver "~a is not a directory path" dir-path))
    
    ;; calculate work and sum them
-   (define-values (wsum ssum lsum len)
+   (define-values (wsum ssum len)
      (for/fold ([wsum 0]
      	        [ssum 0]
-		[lsum 0]
      	        [len 0])
 	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
          (let ([work_ (work graph)]
-	       [span_ (span graph)]
-	       [leaf_ #f])
-	 (printf "~a ~a ~a\n" work_ span_ leaf_)
-	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
+	       [span_ (span graph)])
+	 (printf "~a ~a\n" work_ span_)
+	 (values (+ wsum work_) (+ ssum span_) (+ 1 len))))))
            
    ;; average predictions
    (define avg-work (/ wsum len))
    (define avg-span (/ ssum len))
-   (define avg-leaf (/ lsum len))
    (printf "pcount, upper, lower, leaf-upper, leaf-lower, perfect\n")
-   (for ([tc (in-range 1 129)])
+   (for ([tc (in-range 1 67)])
      (let ([upred (predicted-speed-upper #f tc avg-work avg-span)]
      	   [lpred (predicted-speed-lower #f tc avg-work avg-span)]
-	   [uleaf (predicted-speed-upper #f tc avg-work avg-leaf)]
-	   [lleaf (predicted-speed-lower #f tc avg-work avg-leaf)]
 	   [plspeed (predicted-speed-perfect-linear #f tc avg-work)])
-       (printf "~a, ~a, ~a, ~a, ~a, ~a\n" tc upred lpred uleaf lleaf plspeed)))
+       (printf "~a, ~a, ~a, ~a\n" tc upred lpred plspeed)))
    
-   (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ wsum len)))]
+   (printf "average span is ~a seconds\n" (exact->inexact (/ ssum len)))
+   (printf "Average work is ~a seconds\n" (exact->inexact (/ wsum len)))]
   [else
    (define graph
      (cond
@@ -140,10 +136,14 @@
 					(values (span graph) #f)
 					(values #f #f)))
 
+   (when (span?)
+	 (top-n-span graph 10))
+
    (define-values (span_ span-graph) (if (span?)
 					 (build-span-graph graph)
 					 (values #f #f)))
 
+   
    (when span_
      (printf "Span for original graph is ~a\n" span_))
    
