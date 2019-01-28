@@ -180,7 +180,7 @@
      (printf "printing intersections of span\n")
      (when nspan-graph
 	   (print-targets-most-to-least-build nspan-graph nspan_)
-	   (print-intersections-of-span-build nspan-graph syscall-info))
+	   (print-intersections-of-build nspan-graph syscall-info))
 
      (when nspan_
        (printf "Span for new graph is ~a\n" nspan_))

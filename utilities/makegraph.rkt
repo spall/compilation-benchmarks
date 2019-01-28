@@ -15,6 +15,7 @@
          create-target
 	 create-targetid
          create-rusage-data
+	 get-last-edge
 	 add-makegraph
 	 get-target
          add-recipe
@@ -79,6 +80,13 @@
 	  'unknown ; type 
           '()      ; out-edges
           '()))    ; data
+
+(define (get-last-edge t)
+  (cond
+    [(empty? (target-out-edges t))
+     #f]
+    [else
+     (car (target-out-edges t))]))
 
 (define (edge-print e port mode)
   (when mode (write-string "<" port))
