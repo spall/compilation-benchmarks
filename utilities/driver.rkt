@@ -1,4 +1,4 @@
-#lang racket
+#lang errortrace racket
 
 (require racket/cmdline
          racket/list
@@ -6,9 +6,10 @@
          "strace-parser.rkt"
          "process-syscalls.rkt"
          "makegraphfunctions.rkt"
-         "build-new-graph.rkt"
+         "build-new-graph-optimal.rkt"
          "makegraph.rkt"
-         "run-graph.rkt")
+         "run-graph.rkt"
+	 "flags.rkt")
 
 (define create-dotfile? (make-parameter #f)) 
 (define rusage? (make-parameter #f)) ;; is there rusage data?
@@ -21,10 +22,14 @@
 (define new-graph? (make-parameter #f))
 (define run-new-graph? (make-parameter #f))
 (define dry-run-graph? (make-parameter #f))
+(define run-orig-graph? (make-parameter #f))
 
 (define file-path
   (command-line
    #:once-each
+   [("--debug") level
+    "Turn on debug printing at provided level" ;; TODO add an explanation of the levels
+    (debug? #t)]
    [("-d" "--dotfile") df
     "Produce a graphviz dot file"
     (create-dotfile? df)]
@@ -49,6 +54,9 @@
    [("--dry-run-graph")
     "prints commands that would be run when building graph" 
     (dry-run-graph? #t)]
+   [("--run-orig-graph")
+    "runs all shell commands in graph constructed from make data.  Helps verify graph was constructed correctly."
+    (run-orig-graph? #t)]
    [("--run-new-graph")
     "rebuilds graph using strace data and then runs it"
     (run-new-graph? #t)]
@@ -71,33 +79,29 @@
      (error 'driver "~a is not a directory path" dir-path))
    
    ;; calculate work and sum them
-   (define-values (wsum ssum lsum len)
+   (define-values (wsum ssum len)
      (for/fold ([wsum 0]
      	        [ssum 0]
-		[lsum 0]
      	        [len 0])
 	       ([ru-file (in-directory dir-path)])
        (let ([graph (parse-rusage ru-file)])
-         (let ([work_ (work (makegraph-root graph))]
-	       [span_ (span (makegraph-root graph))]
-	       [leaf_ (longest-leaf graph)])
-	 (printf "~a ~a ~a\n" work_ span_ leaf_)
-	 (values (+ wsum work_) (+ ssum span_) (+ lsum leaf_) (+ 1 len))))))
+         (let ([work_ (work graph)]
+	       [span_ (span graph)])
+	 (printf "~a ~a\n" work_ span_)
+	 (values (+ wsum work_) (+ ssum span_) (+ 1 len))))))
            
    ;; average predictions
    (define avg-work (/ wsum len))
    (define avg-span (/ ssum len))
-   (define avg-leaf (/ lsum len))
    (printf "pcount, upper, lower, leaf-upper, leaf-lower, perfect\n")
-   (for ([tc (in-range 1 129)])
+   (for ([tc (in-range 1 67)])
      (let ([upred (predicted-speed-upper #f tc avg-work avg-span)]
      	   [lpred (predicted-speed-lower #f tc avg-work avg-span)]
-	   [uleaf (predicted-speed-upper #f tc avg-work avg-leaf)]
-	   [lleaf (predicted-speed-lower #f tc avg-work avg-leaf)]
 	   [plspeed (predicted-speed-perfect-linear #f tc avg-work)])
-       (printf "~a, ~a, ~a, ~a, ~a, ~a\n" tc upred lpred uleaf lleaf plspeed)))
+       (printf "~a, ~a, ~a, ~a\n" tc upred lpred plspeed)))
    
-   (printf "Average work is ~a nanoseconds\n" (exact->inexact (/ wsum len)))]
+   (printf "average span is ~a seconds\n" (exact->inexact (/ ssum len)))
+   (printf "Average work is ~a seconds\n" (exact->inexact (/ wsum len)))]
   [else
    (define graph
      (cond
@@ -105,44 +109,79 @@
         (parse-rusage file-path)]
        [else
         (error 'driver "Expected '--rusage-data' flag")]))
+
+   (unless (empty? (buildgraph-makegraphs graph))
+		 (PROJ-DIR (targetid-mfile (makegraph-root (car (buildgraph-makegraphs graph))))))
+	 
+
+   (when (dry-run-graph?)
+	 (printf "Doing a dry run of original graph.\n")
+	 (run-graph-dry graph))
+
+   (when (run-orig-graph?)
+	 (printf "Running original graph.\n")
+	 (run-graph-sequential graph))
    
    (define syscall-info 
      (when (strace?)
-       (printf "Parsing strace\n")
-       (parse-strace (strace?))))
-   
+	   (parse-strace (strace?))))
+
    (define work_ (if (work?)
-                     (work (makegraph-root graph))
+                     (work graph)
 		     #f))
    (when work_
      (printf "Work for original graph is ~a\n" work_))
    
-   (define span_ (if (span?)
-                     (span (makegraph-root graph))
-		     #f))
+   #;(define-values (span_ span-graph) (if (span?)
+					(values (span graph) #f)
+					(values #f #f)))
+
+   (when (span?)
+	 (top-n-span graph 10))
+
+   (define-values (span_ span-graph) (if (span?)
+					 (build-span-graph graph)
+					 (values #f #f)))
+
+   
    (when span_
      (printf "Span for original graph is ~a\n" span_))
    
+   (when span-graph
+	 (print-targets-most-to-least-build span-graph span_)
+   	 #;(print-intersections-of-span-build span-graph syscall-info))
+
    (define parallelism_ (if (and work_ span_)
      	                    (/ work_ span_)
 			    #f))
    (when parallelism_
      (printf "Parallelism for original graph is ~a\n" parallelism_))
 
-
    (when (or (new-graph?) (run-new-graph?))
+	 ;; set to be the directory of the top level make
+	 ;; TODO: allow user to provide more directories
+	 (unless (empty? (buildgraph-makegraphs graph))
+		 (PROJ-DIR (targetid-mfile (makegraph-root (car (buildgraph-makegraphs graph))))))
+	  
      (define new-graph (build-new-graph graph syscall-info))
 
      (define nwork_ (if (work?)
-     	     	        (work (makegraph-root new-graph))
+     	     	        (work new-graph)
 			#f))
      (when nwork_
        (printf "Work for new graph is ~a\n" nwork_))
 
 
-     (define nspan_ (if (span?)
-     	     	    	(span (makegraph-root new-graph))
-			#f))
+     (printf "building span graph\n")
+     (define-values (nspan_ nspan-graph) (if (span?)
+					     (build-span-graph new-graph)
+					     (values #f #f)))
+
+     (printf "printing intersections of span\n")
+     (when nspan-graph
+	   (print-targets-most-to-least-build nspan-graph nspan_)
+	   (print-intersections-of-build nspan-graph syscall-info))
+
      (when nspan_
        (printf "Span for new graph is ~a\n" nspan_))
 
@@ -152,6 +191,9 @@
      (when nparallelism_
        (printf "Parallelism for new graph is ~a\n" nparallelism_))
 
+     (when (dry-run-graph?)
+	   (printf "Doing a dry run of the new graph.\n")
+	   (run-graph-dry new-graph))
 
      (when (run-new-graph?)
        (printf "Running new graph\n")

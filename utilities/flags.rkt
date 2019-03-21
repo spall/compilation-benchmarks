@@ -1,9 +1,7 @@
 #lang racket/base
 
-(provide DEBUG
-         set-DEBUG!)
+(provide debug?
+	 SHELL)
 
-(define DEBUG #f)
-
-(define (set-DEBUG! b)
-  (set! DEBUG b))
+(define debug? (make-parameter #f))
+(define SHELL "/bin/sh -c")

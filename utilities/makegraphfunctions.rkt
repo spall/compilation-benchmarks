@@ -2,109 +2,196 @@
 
 (require racket/list
          racket/string
-         racket/match
+	 racket/sequence
+	 racket/hash
          "makegraph.rkt"
          "flags.rkt"
-         "process-syscalls.rkt")
+         "process-syscalls.rkt"
+	 "work.rkt"
+	 "span.rkt"
+	 "common.rkt")
 
-(provide get-targets
-	 get-last-edge
-         create-dotfile-string
+(provide create-dotfile-string
          print-all-targets-and-mfiles
-         collapse-targets
          work
          span
+	 build-span-graph
+	 top-n-span
          parallel-slackness
          predicted-speed-upper
          predicted-speed-lower
 	 predicted-speed-perfect-linear
-         verify-edges
-	 longest-leaf         
-         print-graph)
+         print-graph
+	 print-targets-most-to-least-build
+	 print-make-targets-most-to-least-build
+	 print-intersections-of-build)
 
-(define (get-last-edge t)
+(define (print-intersections-of-target t graph syscalls)
   (cond
-    [(empty? (target-out-edges t))
-     #f]
-    [else
-     (car (target-out-edges t))]))
-
-;; return a list of possible targets
-(define (get-targets graph tname)
-  (define targets (makegraph-targets graph))
-  (for/fold ([tgs '()])
-            ([val (in-hash-keys targets)])
-    (if (equal? (target-name val) tname)
-        (cons val tgs)
-        tgs)))
-
-(define (leaf-node? node)
-  (empty? (target-out-edges node)))
-
-(define (work node)
-  (cond
-    [(leaf-node? node)
-     (leaf-node-work node)]
-    [else
-     (non-leaf-node-work node)]))
-
-(define (leaf-node-work node)
-  (define data (target-data node))
-  (cond
-    [(rusage-data? data)
-     (rusage-data-elapsed data)]
-    [(number? data)
-     data]
-    [else
-     (error 'leaf-node-work "Unrecognized data ~a ~a" data node)]))
-
-(define (non-leaf-node-work node)
-  (for/sum ([e (reverse (target-out-edges node))])
-    (define n (edge-end e))
-    (work n)))
-
-;; Span(root) = longest time down deps path + sum of times of recipes paths
-(define (span node)
-  (cond
-    [(leaf-node? node)
-     (leaf-node-span node)]
-    [else
-     (non-leaf-node-span node)]))
-
-(define (leaf-node-span node)
-  (define data (target-data node))
-  (cond
-    [(rusage-data? data)
-     (rusage-data-elapsed data)]
-    [(number? data)
-     data]
-    [else
-     (error 'leaf-node-span "Unrecognized data ~a" data)]))
-
-(define (non-leaf-node-span node)
-  (define-values (m s)
-    (for/fold ([max_ 0]
-               [sum 0])
-              ([e (reverse (target-out-edges node))])
-      (define n (edge-end e))
-      (define tmpspan (span n))
-      
+   [(leaf? t) ;; leaf
+    (define data (target-data t))
+    (cond
+     [(rusage-data? data) ;;  Get ins and outs
+      ;; look up calls in syscalls
       (cond
-        [(equal? 'dep (edge-type e))
-         (values (max max_ tmpspan) sum)]
-        [else
-         (values max_ (+ sum tmpspan))])))
-  (+ m s))
+       [(hash-ref syscalls (rusage-data-pid data) #f)
+	(define-values (tmp1 tmp2) (process-in-out-pid (rusage-data-pid data) (rusage-data-dir data) syscalls (rusage-data-cmd data)))
+	(values tmp1 tmp2)]
+       [else
+	(printf "no entry in syscalls for pid ~a\n\n" (rusage-data-pid data))
+	(values #f #f)])] ;; no entry 
+     [else
+      (printf "<~a,~a> doesn't have rusage-data\n\n" (target-name t) (target-mfile t))
+      (values '() '())])] ;; we don't know
+   [else 
+    (printf "Target <~a,~a>: \n\n" (target-name t) (target-mfile t))
+    ;; loop through the edges; they should be in the correct order
+    ;; want to go in reverse order 
+    (let loop ([es (target-out-edges t)]
+	       [lastt #f]
+	       [last-ins '()]
+	       [last-outs '()])
+      (cond
+       [(empty? es)
+	(values '() '())]
+       [else
+	(define t2 (get-target graph (edge-end (car es))))
+	(define-values (ins outs) (print-intersections-of-target t2 graph syscalls))
+	(define t2-cmd (if (rusage-data? (target-data t2))
+			   (rusage-data-cmd (target-data t2))
+			   ""))
+	(if outs
+	    (when lastt
+	    	  (define lastt-cmd (if (rusage-data? (target-data lastt))
+					(rusage-data-cmd (target-data lastt))
+					""))
+		  (cond
+		   [last-ins
+		    (define in (intersection outs last-ins))
+		    (printf "Intersection of target <~a,~a, cmd: ~a> which ran first and target <~a,~a, cmd: ~a> which ran second is: ~a\n\n" (target-name t2) (target-mfile t2) t2-cmd (target-name lastt) (target-mfile lastt) lastt-cmd in)]
+		   [else
+		    (printf "Don't have input information for target <~a,~a> so cnanot consider moving it to run in parallel with target <~a,~a>.\n\n" (target-name lastt) (target-mfile lastt) (target-name t2) (target-mfile t2))]))
+	    (when lastt
+		  (printf "Don't have output information for target <~a,~a> so cannot consider moving target <~a,~a> to be in parallel.\n\n" (target-name t2) (target-mfile t2) (target-name lastt) (target-mfile lastt))))
+
+	(cond
+	 [(= 1 (length es))
+	  (values ins outs)]
+	 [else
+	  (call-with-values (lambda () (loop (cdr es)
+					     t2 ins outs))
+	    (lambda (ins2 outs2)
+	      (values (and ins ins2 (append ins ins2))
+		      (and outs outs2 (append outs outs2)))))])]))]))
+
+#|  print the intersections of every target in the graph
+|#
+(define (print-intersections-of-graph g syscalls)
+  (printf "Printing intersections of root target\n\n")
+  (print-intersections-of-target (get-target g (makegraph-root g)) g syscalls))
+
+#|  print the intersections of every graph in build
+|#
+(define (print-intersections-of-build b syscalls)
+  (for ([mg (buildgraph-makegraphs b)])
+       (print-intersections-of-graph mg syscalls)))
 
 
-(define (longest-target root_ graph)
-  (void)) ;; todo
+(define (print-make-targets-most-to-least-graph g total)
+  (define targets (makegraph-targets g))
+  (define ls (for/fold ([ls '()])
+		       ([t (in-hash-values targets)])
+		       ;; caculate span of target that aren't shellcalls
+		       (cond
+			[(leaf? t)
+			 ls]
+			[else
+			 (define s (work-of-target t g (hash) #t))
+			 (cons (cons s t) ls)])))
 
-(define (longest-leaf graph)
-  (void))
+  ;; sort ls
+  (define sorted (sort ls > #:key car))
+  ;; print them out
+  (for ([p sorted])
+       (define prctg (* 100 (exact->inexact (/ (car p) total))))
+       (printf "Target <~a,~a> is ~a% of total.\n\n" (target-name (cdr p)) (target-mfile (cdr p)) prctg)))
 
-(define (longest-recipe root_ graph)
-  (void))
+(define (print-make-targets-most-to-least-build build total)
+  (for ([mg (buildgraph-makegraphs build)])
+       (printf "Targets of top level make\n")
+       (print-make-targets-most-to-least-graph mg total)))
+
+(define (print-targets-most-to-least-build build total)
+  (for ([mg (buildgraph-makegraphs build)])
+       (printf "Targets of top level make\n")
+       (print-targets-most-to-least mg total)))
+
+(define (sort-targets-by-time graph)
+  (define targets (makegraph-targets graph))
+  (sort (sequence->list (in-hash-values targets))
+	> #:key (lambda (t)
+		  (define data (target-data t))
+		  (cond
+		   [(rusage-data? data)
+		    (rusage-data-elapsed data)]
+		   [(number? data)
+		    data]
+		   [else
+		    0]))))
+
+(define (print-targets-most-to-least graph total)
+  (define sorted (sort-targets-by-time graph))
+  (for ([t sorted])
+       (define ttime (cond
+		      [(rusage-data? (target-data t))
+		       (rusage-data-elapsed (target-data t))]
+		      [(number? (target-data t))
+		       (target-data t)]
+		      [else
+		       #f]))
+       (define cmd-run (cond
+			[(rusage-data? (target-data t))
+			 (rusage-data-cmd (target-data t))]
+			[else
+			 "No command saved as run."]))
+       (when ttime
+	     (define prctg (* 100 (exact->inexact (/ ttime total))))
+	     (printf "Target <~a,~a> is ~a% of total: ran ~a.\n\n" (target-name t) (target-mfile t) prctg cmd-run))))
+
+#|  returns the targetid of the most expensive target in the build
+|#
+(define (most-expensive-target build [subs (hash)])
+  (define-values (_ tid) (for/fold ([max 0]
+				    [maxtid #f])
+				   ([mg (buildgraph-makegraphs build)])
+				   (define-values (w me) (most-expensive-target-graph mg subs))
+				   (if (> w max)
+				       (values w me)
+				       (values max maxtid))))
+  tid)
+
+
+#|  returns the targetid of the most expensive target in the makegraph
+|#
+(define (most-expensive-target-graph graph [subs (hash)])
+  (define targets (makegraph-targets graph))
+  (define ls (for/fold ([ls '()])
+		       ([tid (in-hash-keys (makegraph-targets graph))])
+		       (define t (hash-ref (makegraph-targets graph) tid))
+		       (cond
+			[(leaf? t)
+			 ls]
+			[else
+			 (define s (work-of-target tid graph subs))
+			 (cons (cons s tid) ls)])))
+  
+  ;; sort ls
+  (define sorted (sort ls > #:key car))
+  ;; return first thing
+  (if (empty? sorted)
+      (error 'most-expensive-target-graph "No non-leaf targets in graph\n")
+      (values (caar sorted)
+	      (cdar sorted))))
 
 ;; factor by which the parallelism of the computation exceeds the number of processors
 (define (parallel-slackness graph pcount)
@@ -148,34 +235,6 @@
       (when (equal? name (mcar (car ts)))
         (printf "target: ~a; mfile: ~a\n\n" (mcar (car ts)) (mcdr (car ts))))
       (loop (cdr ts)))))
-
-(define (collapse-targets graph)
-  (define targets (makegraph-targets graph))
-  (for ([t (in-hash-keys targets)])
-    (set-target-out-edges! t
-      (let loop ([es (target-out-edges t)])
-        (cond
-	  [(empty? es)
-	   '()]
-	  [(member (car es) (cdr es))
-	   (loop (cdr es))]
-	  [else
-	   (cons (car es) (loop (cdr es)))])))))
-
-(define (verify-edges graph)
-
-  (for ([t (in-hash-keys (makegraph-targets graph))])
-    (define es (make-hash))
-    (unless (empty? (target-out-edges t))
-      (hash-set! es (car (target-out-edges t)) #t)
-      (for/fold ([last (edge-id (car (target-out-edges t)))])
-                ([e (cdr (target-out-edges t))])
-        (when (hash-ref es e #f)
-          (printf "Target <~a,~a> has more than one copy of edge ~a\n" (target-name t) (target-mfile t) (edge-id e)))
-        (hash-set! es e #t)
-        (when (< (edge-id e) last)
-          (printf "edge id ~a is less than last edge id ~a\n" (edge-id e) last))
-        (edge-id e)))))
     
 ;; ------------------------ graphviz dot file --------------------------------
 
